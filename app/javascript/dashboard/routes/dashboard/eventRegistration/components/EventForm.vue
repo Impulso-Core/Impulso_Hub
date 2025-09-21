@@ -65,7 +65,7 @@ const text = Object.freeze({
     add: 'Adicionar',
     empty: 'Adicione manualmente ou importe via CSV para iniciar o envio.',
     remove: 'Remover',
-    firstContact: 'Primeiro contato',
+    firstContact: 'Primeiro contato (Template)',
     name: 'Nome',
     email: 'Email',
     phone: 'Telefone (WhatsApp)',
