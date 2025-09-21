@@ -1,0 +1,404 @@
+<div class="flex-1 w-full overflow-y-auto min-h-0">
+  <div
+    class="mx-auto flex min-h-full w-full max-w-6xl flex-col gap-8 px-6 py-10 text-n-slate-12"
+  >
+    <header class="flex flex-wrap items-start justify-between gap-6">
+      <div class="flex flex-col gap-2">
+        <h1 class="text-2xl font-semibold">
+          {{ text.header.title }}
+        </h1>
+        <p class="max-w-2xl text-sm text-n-slate-10">
+          {{ text.header.description }}
+        </p>
+      </div>
+      <div class="flex flex-wrap items-center gap-3">
+        <Button
+          variant="faded"
+          color="slate"
+          size="sm"
+          icon="i-lucide-rotate-cw"
+          :label="text.buttons.refresh"
+          :is-loading="loading"
+          :disabled="loading"
+          @click="loadSchedules"
+        />
+        <Button
+          color="blue"
+          size="sm"
+          icon="i-lucide-plus"
+          :label="text.buttons.create"
+          @click="openForm()"
+        />
+      </div>
+    </header>
+
+    <section class="grid gap-4 md:grid-cols-3">
+      <div
+        v-for="card in stats"
+        :key="card.label"
+        class="flex items-center gap-4 rounded-2xl border border-n-container bg-n-solid-1 px-5 py-4 shadow-sm"
+      >
+        <span
+          class="flex h-12 w-12 items-center justify-center rounded-xl bg-n-solid-2 text-xl text-n-blue-text"
+        >
+          <i :class="card.icon" />
+        </span>
+        <div class="flex flex-col">
+          <span class="text-xs uppercase tracking-wide text-n-slate-9">
+            {{ card.label }}
+          </span>
+          <span class="text-2xl font-semibold text-n-slate-12 tabular-nums">
+            {{ card.value }}
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <section
+      class="rounded-3xl border border-n-container bg-n-solid-1 p-6 shadow-xl shadow-n-solid-3/10"
+    >
+      <div
+        class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between"
+      >
+          <input
+            v-model="filters.search"
+            type="search"
+            class="w-full bg-transparent text-xs font-medium text-n-slate-12 placeholder:text-n-slate-10 focus:outline-none"
+            :placeholder="text.filters.searchPlaceholder"
+          />
+          <i class="i-lucide-search text-sm text-n-slate-10 flex-shrink-0 -mt-[15px]" />
+
+
+        <div class="flex w-full flex-wrap items-center gap-3 lg:justify-end">
+          <div
+            class="flex flex-wrap items-center gap-2 rounded-full border border-n-container bg-n-solid-2 px-1 py-1"
+          >
+            <button
+              v-for="option in channelOptions"
+              :key="option.value"
+              type="button"
+              class="flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition"
+              :class="[
+                filters.channel === option.value
+                  ? 'bg-n-solid-3 text-n-slate-12 shadow-sm'
+                  : 'text-n-slate-10 hover:bg-n-solid-3',
+              ]"
+              @click="filters.channel = option.value"
+            >
+              <i :class="option.icon" class="text-sm" />
+              {{ option.label }}
+            </button>
+          </div>
+
+          <div
+            class="flex flex-wrap items-center gap-2 rounded-full border border-n-container bg-n-solid-2 px-1 py-1"
+          >
+            <button
+              v-for="option in statusOptions"
+              :key="option.value"
+              type="button"
+              class="flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition"
+              :class="[
+                filters.status === option.value
+                  ? 'bg-n-solid-3 text-n-slate-12 shadow-sm'
+                  : 'text-n-slate-10 hover:bg-n-solid-3',
+              ]"
+              @click="filters.status = option.value"
+            >
+              <span
+                class="inline-flex h-2 w-2 rounded-full"
+                :class="option.badge"
+              />
+              {{ option.label }}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-6 space-y-6">
+        <div v-if="loading" class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <div
+            v-for="skeleton in 6"
+            :key="skeleton"
+            class="h-48 rounded-2xl border border-n-container bg-n-solid-2/60 animate-pulse"
+          />
+        </div>
+
+        <div
+          v-else-if="!pagedSchedules.length"
+          class="flex flex-col items-center justify-center gap-3 rounded-3xl border border-dashed border-n-container bg-n-solid-2 px-12 py-16 text-center"
+        >
+          <span class="text-4xl">{{ text.empty.icon }}</span>
+          <h2 class="text-xl font-semibold text-n-slate-12">
+            {{ text.empty.title }}
+          </h2>
+          <p class="max-w-md text-sm text-n-slate-10">
+            {{ text.empty.description }}
+          </p>
+          <Button
+            color="blue"
+            icon="i-lucide-plus"
+            :label="text.empty.action"
+            @click="openForm()"
+          />
+        </div>
+
+        <div v-else class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <article
+            v-for="item in pagedSchedules"
+            :key="item.eventId"
+            class="flex h-full flex-col gap-4 rounded-3xl border border-n-container bg-n-solid-2 p-5 shadow-lg shadow-n-solid-2/20 transition hover:-translate-y-0.5 hover:shadow-xl"
+            :class="{ 'opacity-70': !item.enabled }"
+          >
+            <header class="flex items-start justify-between gap-3">
+              <div class="min-w-0 space-y-2">
+                <div class="flex items-center gap-2">
+                  <h3
+                    class="truncate text-base font-semibold"
+                    :title="item.eventId"
+                  >
+                    {{ item.eventId }}
+                  </h3>
+                  <span
+                    class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold"
+                    :class="
+                      item.enabled
+                        ? 'bg-n-teal-2 text-n-teal-11'
+                        : 'bg-n-slate-3 text-n-slate-11'
+                    "
+                  >
+                    {{
+                      item.enabled
+                        ? text.card.statusEnabled
+                        : text.card.statusDisabled
+                    }}
+                  </span>
+                  <span
+                    class="rounded-full border border-n-weak px-2 py-0.5 text-[11px] text-n-slate-11"
+                  >
+                    {{
+                      item.channel === 'email'
+                        ? text.card.channelEmail
+                        : text.card.channelWhatsapp
+                    }}
+                  </span>
+                </div>
+                <dl class="space-y-2 text-xs text-n-slate-10">
+                  <div class="flex items-center gap-2">
+                    <dt class="font-medium text-n-slate-9">
+                      {{ text.card.labels.model }}
+                    </dt>
+                    <dd class="text-n-slate-12">
+                      {{
+                        item.runAt
+                          ? text.card.types.runAt
+                          : text.card.types.recurring
+                      }}
+                    </dd>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <dt class="font-medium text-n-slate-9">
+                      {{ text.card.labels.when }}
+                    </dt>
+                    <dd class="text-n-slate-12">
+                      {{ humanRecurring(item) }}
+                    </dd>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <dt class="font-medium text-n-slate-9">
+                      {{ text.card.labels.timeframe }}
+                    </dt>
+                    <dd class="text-n-slate-12">
+                      <span>
+                        {{ formatDateTime(item.startAt) }}
+                        {{ text.fallbackDash }}
+                        {{ formatDateTime(item.endAt) }}
+                      </span>
+                    </dd>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <dt class="font-medium text-n-slate-9">
+                      {{ text.card.labels.recipients }}
+                    </dt>
+                    <dd class="text-n-slate-12">
+                      {{ item.recipients.length }}
+                    </dd>
+                  </div>
+                </dl>
+              </div>
+              <div class="flex flex-col gap-2">
+                <Button
+                  variant="ghost"
+                  color="slate"
+                  size="xs"
+                  icon="i-lucide-power"
+                  :is-loading="togglingId === item.eventId"
+                  :aria-label="
+                    item.enabled
+                      ? text.buttons.toggleDisable
+                      : text.buttons.toggleEnable
+                  "
+                  @click="toggleEnabled(item)"
+                />
+                <Button
+                  variant="ghost"
+                  color="slate"
+                  size="xs"
+                  icon="i-lucide-pencil"
+                  :aria-label="text.buttons.editSchedule"
+                  @click="openForm(item)"
+                />
+                <Button
+                  variant="ghost"
+                  color="ruby"
+                  size="xs"
+                  icon="i-lucide-trash"
+                  :aria-label="text.buttons.deleteSchedule"
+                  @click="openDeleteDialog(item)"
+                />
+              </div>
+            </header>
+
+            <footer class="mt-auto space-y-3">
+              <Button
+                v-if="item.recipients.length"
+                variant="ghost"
+                color="slate"
+                size="sm"
+                justify="start"
+                class="w-full"
+                :icon="
+                  isExpanded(item.eventId)
+                    ? 'i-lucide-chevron-down'
+                    : 'i-lucide-chevron-right'
+                "
+                :label="
+                  isExpanded(item.eventId)
+                    ? text.buttons.toggleRecipientsHide
+                    : text.buttons.toggleRecipientsShow
+                "
+                @click="toggleRecipients(item.eventId)"
+              />
+
+              <transition name="fade">
+                <div
+                  v-if="isExpanded(item.eventId)"
+                  class="space-y-2 rounded-2xl border border-n-weak bg-n-solid-1/70 p-4"
+                >
+                  <div
+                    v-for="(recipient, index) in item.recipients"
+                    :key="`${item.eventId}-${index}`"
+                    class="flex items-start justify-between gap-4 rounded-xl border border-n-weak bg-n-solid-2 px-4 py-3"
+                  >
+                    <div class="space-y-1">
+                      <p class="text-sm font-medium text-n-slate-12">
+                        {{ recipient.name || '(sem nome)' }}
+                      </p>
+                      <p class="text-xs text-n-slate-10">
+                        {{
+                      item.channel === 'email'
+                        ? recipient.email
+                        : recipient.phone
+                    }}
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  color="slate"
+                  size="xs"
+                  icon="i-lucide-eye"
+                  :label="text.buttons.preview"
+                  @click="openPreview(item, recipient)"
+                />
+              </div>
+            </div>
+          </transition>
+        </footer>
+      </article>
+    </div>
+
+    <div
+      v-if="!loading && filteredSchedules.length > pageSize"
+      class="flex items-center justify-center gap-4"
+    >
+      <Button
+        variant="ghost"
+        color="slate"
+        size="sm"
+        icon="i-lucide-arrow-left"
+        :label="text.pagination.previous"
+        :disabled="page <= 1"
+        @click="goToPreviousPage"
+      />
+      <span class="text-sm text-n-slate-10">
+        {{ text.pagination.info(page, totalPages) }}
+      </span>
+      <Button
+        variant="ghost"
+        color="slate"
+        size="sm"
+        icon="i-lucide-arrow-right"
+        :label="text.pagination.next"
+        :disabled="page >= totalPages"
+        @click="goToNextPage"
+      />
+    </div>
+  </div>
+</section>
+
+    <Dialog
+      ref="formDialogRef"
+      width="7xl"
+      :overflow-y-auto="true"
+      :title="
+        selectedSchedule ? text.buttons.editSchedule : text.buttons.create
+      "
+      :show-confirm-button="false"
+      :show-cancel-button="false"
+      @close="resetFormDialogState"
+    >
+      <EventForm
+        v-if="formDialogOpen"
+        :value="selectedSchedule"
+        @saved="handleSaved"
+        @close="hideFormDialog"
+      />
+    </Dialog>
+
+    <Dialog
+      ref="previewDialogRef"
+      width="xl"
+      :title="text.preview.title"
+      :confirm-button-label="text.preview.close"
+      :show-cancel-button="false"
+      @confirm="hidePreviewDialog"
+      @close="resetPreviewDialogState"
+    >
+      <div class="space-y-3 text-sm text-n-slate-12">
+        <h3 class="text-base font-semibold">{{ previewContent.title }}</h3>
+        <pre
+          class="max-h-80 overflow-y-auto rounded-xl border border-n-weak bg-n-solid-2 p-4 text-xs whitespace-pre-wrap"
+        >
+          {{ previewContent.body }}
+        </pre>
+      </div>
+    </Dialog>
+
+    <Dialog
+      ref="deleteDialogRef"
+      width="sm"
+      type="alert"
+      :title="text.delete.title"
+      :description="text.delete.description"
+      :confirm-button-label="text.delete.confirm"
+      :cancel-button-label="text.delete.cancel"
+      :is-loading="Boolean(deletingId)"
+      @confirm="confirmDelete"
+      @close="resetDeleteDialogState"
+    >
+      <p class="text-sm text-n-slate-11">
+        {{ text.delete.question(deleteTarget ? deleteTarget.eventId : '') }}
+      </p>
+    </Dialog>
+  </div>
+</div>

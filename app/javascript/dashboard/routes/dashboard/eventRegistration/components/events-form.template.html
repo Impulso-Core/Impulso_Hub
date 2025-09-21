@@ -1,0 +1,578 @@
+<form
+  class="flex w-full max-h-[72vh] flex-col gap-8 overflow-y-auto pr-1"
+  @submit.prevent="submit"
+>
+  <section class="grid gap-6 md:grid-cols-2">
+    <div class="flex flex-col gap-2">
+      <label class="text-xs font-semibold uppercase tracking-wide text-n-slate-9">
+        {{ text.name.label }}
+      </label>
+      <input
+        v-model.trim="form.name"
+        :disabled="isEdit"
+        class="rounded-xl border border-n-weak bg-n-background px-4 py-3 text-sm text-n-slate-12 focus:border-n-brand focus:outline-none"
+        :placeholder="text.name.placeholder"
+        required
+      />
+    </div>
+    <div class="flex flex-col gap-2">
+      <label class="text-xs font-semibold uppercase tracking-wide text-n-slate-9">
+        {{ text.channel.label }}
+      </label>
+      <select
+        v-model="form.channel"
+        class="rounded-xl px-4 py-3 text-sm focus:outline-none"
+        :class="[
+          canSelectChannel
+            ? 'border border-n-weak bg-n-background text-n-slate-12 focus:border-n-brand'
+            : 'border border-n-ruby-8 bg-n-solid-2 text-n-slate-9 cursor-not-allowed',
+        ]"
+        :disabled="!canSelectChannel"
+        :title="!canSelectChannel ? text.tooltips.channel : ''"
+      >
+        <option disabled value="">
+          {{ text.channel.placeholder }}
+        </option>
+        <option value="whatsapp">{{ text.channel.options.whatsapp }}</option>
+        <option value="email">{{ text.channel.options.email }}</option>
+      </select>
+    </div>
+  </section>
+
+  <section v-if="form.channel === 'whatsapp'" class="space-y-3">
+    <label class="text-xs font-semibold uppercase tracking-wide text-n-slate-9">
+      {{ text.agent.label }}
+    </label>
+    <select
+      v-model="form.agent"
+      class="w-full rounded-xl px-4 py-3 text-sm focus:outline-none"
+      :class="[
+        agentsLoading || !canSelectAgent
+          ? 'border border-n-ruby-8 bg-n-solid-2 text-n-slate-9 cursor-not-allowed'
+          : 'border border-n-weak bg-n-background text-n-slate-12 focus:border-n-brand',
+      ]"
+      :disabled="agentsLoading || !canSelectAgent"
+      :title="!canSelectAgent ? text.tooltips.agent : ''"
+    >
+      <option value="" disabled>{{ text.agent.placeholder }}</option>
+      <option
+        v-for="whatsAgent in agents"
+        :key="whatsAgent.id"
+        :value="whatsAgent.number"
+      >
+        {{ whatsAgent.label }}
+      </option>
+    </select>
+    <p class="text-xs text-n-slate-10">
+      {{ text.agent.hint }}
+    </p>
+  </section>
+
+  <section class="space-y-4">
+    <header class="grid gap-6 lg:grid-cols-2 lg:items-start">
+      <div class="flex flex-col gap-3">
+        <div class="space-y-1">
+          <h2 class="text-base font-semibold text-n-slate-12">
+            {{ text.recipients.title }}
+          </h2>
+          <p class="text-xs text-n-slate-10">{{ text.recipients.subtitle }}</p>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <div class="relative">
+            <button
+              type="button"
+              class="rounded-xl border border-n-weak bg-n-background px-4 py-2 text-xs font-medium text-n-slate-11 shadow-sm hover:bg-n-solid-1"
+            >
+              {{ text.recipients.import }}
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                class="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                @change="handleCsvUpload"
+              />
+            </button>
+          </div>
+          <Button
+            variant="ghost"
+            color="slate"
+            size="sm"
+            icon="i-lucide-download"
+            :label="text.recipients.download"
+            type="button"
+            @click="downloadCsvTemplate"
+          />
+          <Button
+            color="blue"
+            size="sm"
+            icon="i-lucide-user-plus"
+            :label="text.recipients.add"
+            type="button"
+            @click="addRecipient"
+          />
+        </div>
+      </div>
+      <div class="flex w-full flex-col gap-3">
+        <label class="text-xs font-semibold uppercase tracking-wide text-n-slate-9">
+          {{ text.customField.title }}
+        </label>
+        <p v-if="!variableEntries.length" class="text-xs text-n-slate-10">
+          {{ text.customField.empty }}
+        </p>
+        <div v-else class="flex flex-wrap gap-2">
+          <span
+            v-for="variable in variableEntries"
+            :key="variable.key"
+            class="inline-flex items-center gap-2 rounded-full border border-n-weak bg-n-solid-2 px-3 py-1 text-xs uppercase tracking-wide text-n-slate-9"
+          >
+            <span class="font-semibold text-n-slate-12 normal-case">
+              {{ variable.label }}
+            </span>
+            <span class="text-[11px] text-n-slate-9">{{ variable.key }}</span>
+          </span>
+        </div>
+      </div>
+    </header>
+
+    <div class="rounded-3xl border border-n-container bg-n-solid-2 p-4">
+      <div class="grid gap-3">
+        <div
+          v-for="(recipient, index) in form.recipients"
+          :key="`recipient-${index}`"
+          class="flex flex-col gap-4 rounded-2xl border border-n-weak bg-n-solid-1 p-4"
+        >
+          <div class="grid gap-3 md:grid-cols-2">
+            <div class="flex flex-col gap-2">
+              <label class="text-xs font-semibold uppercase tracking-wide text-n-slate-9">
+                {{ text.recipients.name }}
+              </label>
+              <input
+                v-model="recipient.name"
+                class="rounded-xl border border-n-weak bg-transparent px-4 py-2 text-sm focus:border-n-brand focus:outline-none"
+                :placeholder="text.recipients.namePlaceholder"
+              />
+            </div>
+            <div class="flex flex-col gap-2">
+              <label class="text-xs font-semibold uppercase tracking-wide text-n-slate-9">
+                {{
+                  form.channel === 'email'
+                    ? text.recipients.email
+                    : text.recipients.phone
+                }}
+              </label>
+              <input
+                v-if="form.channel === 'email'"
+                v-model="recipient.email"
+                class="rounded-xl border border-n-weak bg-transparent px-4 py-2 text-sm focus:border-n-brand focus:outline-none"
+                :placeholder="text.recipients.emailPlaceholder"
+                type="email"
+              />
+              <input
+                v-else
+                v-model="recipient.phone"
+                class="rounded-xl border border-n-weak bg-transparent px-4 py-2 text-sm focus:border-n-brand focus:outline-none"
+                :placeholder="text.recipients.phonePlaceholder"
+              />
+            </div>
+          </div>
+
+          <div
+            v-if="variableEntries.length"
+            class="space-y-2 rounded-2xl border border-n-weak bg-n-solid-2 p-3"
+          >
+            <h4 class="text-xs font-semibold uppercase tracking-wide text-n-slate-9">
+              {{ text.customField.title }}
+            </h4>
+            <div class="grid gap-3 md:grid-cols-2">
+              <div
+                v-for="variable in variableEntries"
+                :key="`${variable.key}-${index}`"
+                class="flex flex-col gap-1"
+              >
+                <label class="text-xs font-medium text-n-slate-10">
+                  {{ variable.label }}
+                </label>
+                <input
+                  v-model="recipient.vars[variable.key]"
+                  class="rounded-xl border border-n-weak bg-n-background px-3 py-2 text-sm text-n-slate-12 focus:border-n-brand focus:outline-none"
+                  :placeholder="text.customField.valuePlaceholder"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <label
+              class="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-n-slate-9"
+            >
+              <input
+                v-model="recipient.primeiroContato"
+                type="checkbox"
+                class="h-4 w-4 rounded border border-n-weak text-n-brand focus:ring-n-brand"
+              />
+              {{ text.recipients.firstContact }}
+            </label>
+            <Button
+              variant="ghost"
+              color="ruby"
+              size="xs"
+              icon="i-lucide-trash"
+              :label="text.recipients.remove"
+              type="button"
+              @click="removeRecipient(index)"
+            />
+          </div>
+        </div>
+      </div>
+
+      <p v-if="!form.recipients.length" class="mt-4 text-sm text-n-slate-10">
+        {{ text.recipients.empty }}
+      </p>
+      <p
+        v-if="csvReport"
+        class="mt-3 text-sm"
+        :class="csvReport.ok ? 'text-n-teal-11' : 'text-n-ruby-11'"
+      >
+        {{ csvReport.msg }}
+      </p>
+    </div>
+  </section>
+
+  <section v-if="showFirstContactTemplate" class="space-y-6">
+    <header class="space-y-1">
+      <h2 class="text-base font-semibold text-n-slate-12">
+        {{ text.content.title }}
+      </h2>
+      <p class="text-xs text-n-slate-10">{{ text.content.description }}</p>
+    </header>
+
+    <div v-if="form.channel === 'email'" class="grid gap-4">
+      <div class="flex flex-col gap-2">
+        <label class="text-xs font-semibold uppercase tracking-wide text-n-slate-9">
+          {{ text.content.subject }}
+        </label>
+        <input
+          v-model="form.payload.subject"
+          class="rounded-xl border border-n-weak bg-n-background px-4 py-3 text-sm text-n-slate-12 focus:border-n-brand focus:outline-none"
+          :placeholder="text.content.subjectPlaceholder"
+        />
+      </div>
+      <div class="flex flex-col gap-2">
+        <label class="text-xs font-semibold uppercase tracking-wide text-n-slate-9">
+          {{ text.content.text }}
+        </label>
+        <textarea
+          v-model="form.payload.text"
+          rows="4"
+          class="rounded-xl border border-n-weak bg-n-background px-4 py-3 text-sm text-n-slate-12 focus:border-n-brand focus:outline-none"
+          :placeholder="text.content.textPlaceholder"
+          @input="recomputeRequiredPlaceholders"
+        />
+      </div>
+      <div class="flex flex-col gap-2">
+        <label class="text-xs font-semibold uppercase tracking-wide text-n-slate-9">
+          {{ text.content.html }}
+        </label>
+        <textarea
+          v-model="form.payload.html"
+          rows="4"
+          class="rounded-xl border border-n-weak bg-n-background px-4 py-3 text-sm text-n-slate-12 focus:border-n-brand focus:outline-none"
+          :placeholder="text.content.htmlPlaceholder"
+          @input="recomputeRequiredPlaceholders"
+        />
+      </div>
+    </div>
+
+    <div v-else class="space-y-4">
+      <div class="flex flex-wrap items-center gap-2">
+        <select
+          v-model="selectedTemplateKey"
+          class="w-full rounded-xl border border-n-weak bg-n-background px-4 py-3 text-sm text-n-slate-12 focus:border-n-brand focus:outline-none"
+          :disabled="templatesLoading || !templates.length"
+        >
+          <option value="" disabled>
+            {{
+              templatesLoading
+                ? text.content.templateSelect.loading
+                : templates.length
+                  ? text.content.templateSelect.placeholder
+                  : text.content.templateSelect.empty
+            }}
+          </option>
+          <option
+            v-for="template in templates"
+            :key="template.key"
+            :value="template.key"
+          >
+            {{ template.title }}
+          </option>
+        </select>
+        <Button
+          variant="ghost"
+          color="slate"
+          size="sm"
+          icon="i-lucide-rotate-cw"
+          :label="text.content.templateActions.reload"
+          type="button"
+          :disabled="templatesLoading"
+          @click="loadTemplates"
+        />
+        <Button
+          variant="ghost"
+          color="slate"
+          size="sm"
+          icon="i-lucide-refresh-cw"
+          :label="text.content.templateActions.sync"
+          type="button"
+          :disabled="templatesLoading"
+          @click="syncTemplates"
+        />
+        <Button
+          color="blue"
+          size="sm"
+          icon="i-lucide-sparkles"
+          :label="text.content.templateActions.apply"
+          type="button"
+          :disabled="!selectedTemplate"
+          @click="applyTemplate"
+        />
+      </div>
+
+      <p v-if="selectedTemplate?.placeholders.length" class="text-xs text-n-slate-10">
+        {{ text.content.templatePlaceholders }}
+        <span
+          v-for="placeholder in selectedTemplate.placeholders"
+          :key="placeholder"
+          class="ml-1 inline-flex items-center rounded-full bg-n-solid-2 px-2 py-0.5 text-[11px]"
+        >
+          {{ placeholder }}
+        </span>
+      </p>
+
+      <div class="flex flex-col gap-2">
+        <label class="text-xs font-semibold uppercase tracking-wide text-n-slate-9">
+          {{ text.content.message }}
+        </label>
+        <textarea
+          v-model="form.payload.message"
+          rows="4"
+          class="rounded-xl border border-n-weak bg-n-background px-4 py-3 text-sm text-n-slate-12 focus:border-n-brand focus:outline-none"
+          :placeholder="text.content.textPlaceholder"
+          @input="recomputeRequiredPlaceholders"
+        />
+      </div>
+
+      <div
+        v-if="placeholderGlobalError"
+        class="rounded-xl bg-n-ruby-2 px-4 py-3 text-sm text-n-ruby-11"
+      >
+        {{ placeholderGlobalError }}
+      </div>
+    </div>
+  </section>
+
+  <section class="space-y-6">
+    <header class="space-y-1">
+      <h2 class="text-base font-semibold text-n-slate-12">
+        {{ text.schedule.title }}
+      </h2>
+      <p class="text-xs text-n-slate-10">{{ text.schedule.description }}</p>
+    </header>
+
+    <div class="flex items-center gap-3">
+      <input
+        id="oneshot"
+        v-model="oneShot"
+        type="checkbox"
+        class="h-4 w-4 rounded border border-n-weak text-n-brand focus:ring-n-brand"
+      />
+      <label for="oneshot" class="text-sm text-n-slate-12">{{
+        text.schedule.runOnce
+      }}</label>
+    </div>
+
+    <div v-if="oneShot" class="grid gap-4 md:grid-cols-2">
+      <div class="flex flex-col gap-2">
+        <label class="text-xs font-semibold uppercase tracking-wide text-n-slate-9">
+          {{ text.schedule.runAt }}
+        </label>
+        <input
+          v-model="form.runAt"
+          class="rounded-xl border border-n-weak bg-n-background px-4 py-3 text-sm text-n-slate-12 focus:border-n-brand focus:outline-none"
+          :placeholder="text.schedule.runAtPlaceholder"
+        />
+      </div>
+      <div class="flex flex-col gap-2">
+        <label class="text-xs font-semibold uppercase tracking-wide text-n-slate-9">
+          {{ text.schedule.timezone }}
+        </label>
+        <input
+          :value="text.schedule.timezoneStatic"
+          disabled
+          class="rounded-xl border border-dashed border-n-weak bg-n-solid-2 px-4 py-3 text-sm text-n-slate-10"
+        />
+      </div>
+    </div>
+
+    <div v-else class="grid gap-4 md:grid-cols-3">
+      <div class="flex flex-col gap-3">
+        <span class="text-xs font-semibold uppercase tracking-wide text-n-slate-9">
+          {{ text.schedule.days }}
+        </span>
+        <div class="grid grid-cols-2 gap-2">
+          <label
+            v-for="day in DAYS_OF_WEEK"
+            :key="day.value"
+            class="inline-flex items-center gap-2 rounded-xl border border-n-weak bg-n-solid-1 px-3 py-2 text-xs font-medium text-n-slate-11"
+          >
+            <input
+              v-model="form.daysOfWeek"
+              type="checkbox"
+              :value="day.value"
+              class="h-4 w-4 rounded border border-n-weak text-n-brand focus:ring-n-brand"
+            />
+            {{ day.label }}
+          </label>
+        </div>
+      </div>
+      <div class="flex flex-col gap-2">
+        <label class="text-xs font-semibold uppercase tracking-wide text-n-slate-9">
+          {{ text.schedule.time }}
+        </label>
+        <input
+          v-model="form.time"
+          class="rounded-xl border border-n-weak bg-n-background px-4 py-3 text-sm text-n-slate-12 focus:border-n-brand focus:outline-none"
+          :placeholder="text.schedule.timePlaceholder"
+        />
+      </div>
+      <div class="flex flex-col gap-2">
+        <label class="text-xs font-semibold uppercase tracking-wide text-n-slate-9">
+          {{ text.schedule.timezone }}
+        </label>
+        <input
+          v-model="form.timezone"
+          class="rounded-xl border border-n-weak bg-n-background px-4 py-3 text-sm text-n-slate-12 focus:border-n-brand focus:outline-none"
+          :placeholder="text.schedule.timezonePlaceholder"
+        />
+      </div>
+    </div>
+
+    <div
+      v-if="form.channel === 'whatsapp' && !oneShot"
+      class="space-y-3 rounded-3xl border border-n-container bg-n-solid-2 p-4"
+    >
+      <h3 class="text-sm font-semibold text-n-slate-12">
+        {{ text.schedule.dayMessagesTitle }}
+      </h3>
+      <div class="grid gap-4 md:grid-cols-2">
+        <div
+          v-for="day in form.daysOfWeek"
+          :key="day"
+          class="flex flex-col gap-2 rounded-2xl border border-n-weak bg-n-solid-1 p-3"
+        >
+          <label class="text-xs font-semibold uppercase tracking-wide text-n-slate-9">
+            {{ DAYS_OF_WEEK.find(option => option.value === day)?.label || day }}
+          </label>
+          <textarea
+            v-model="form.payload.messagesByDay[day]"
+            rows="3"
+            class="rounded-xl border border-n-weak bg-transparent px-4 py-3 text-sm text-n-slate-12 focus:border-n-brand focus:outline-none"
+            :placeholder="
+              text.schedule.messageLabel(
+                DAYS_OF_WEEK.find(option => option.value === day)?.label || day
+              )
+            "
+            @input="recomputeRequiredPlaceholders"
+          />
+          <p
+            v-if="!(form.payload.messagesByDay[day] || '').trim()"
+            class="text-xs text-n-ruby-11"
+          >
+            {{
+              text.schedule.missingMessage(
+                DAYS_OF_WEEK.find(option => option.value === day)?.label || day
+              )
+            }}
+          </p>
+        </div>
+      </div>
+      <p
+        v-if="placeholderDaysError"
+        class="rounded-xl bg-n-ruby-2 px-3 py-2 text-xs text-n-ruby-11"
+      >
+        {{ placeholderDaysError }}
+      </p>
+    </div>
+  </section>
+
+  <section class="grid gap-4 md:grid-cols-2">
+    <div class="flex flex-col gap-2">
+      <label class="text-xs font-semibold uppercase tracking-wide text-n-slate-9">
+        {{ text.timeframe.start }}
+      </label>
+      <input
+        v-model="form.startAt"
+        class="rounded-xl border border-n-weak bg-n-background px-4 py-3 text-sm text-n-slate-12 focus:border-n-brand focus:outline-none"
+        :placeholder="text.timeframe.startPlaceholder"
+      />
+    </div>
+    <div class="flex flex-col gap-2">
+      <label class="text-xs font-semibold uppercase tracking-wide text-n-slate-9">
+        {{ text.timeframe.end }}
+      </label>
+      <input
+        v-model="form.endAt"
+        class="rounded-xl border border-n-weak bg-n-background px-4 py-3 text-sm text-n-slate-12 focus:border-n-brand focus:outline-none"
+        :placeholder="text.timeframe.endPlaceholder"
+      />
+    </div>
+    <p
+      v-if="!validDateRange"
+      class="md:col-span-2 rounded-xl bg-n-ruby-2 px-4 py-2 text-sm text-n-ruby-11"
+    >
+      {{ text.timeframe.error }}
+    </p>
+  </section>
+
+  <label
+    class="flex items-center gap-3 rounded-2xl border border-n-weak bg-n-solid-2 px-4 py-3 text-sm"
+  >
+    <input
+      v-model="form.enabled"
+      type="checkbox"
+      class="h-4 w-4 rounded border border-n-weak text-n-brand focus:ring-n-brand"
+    />
+    {{ text.toggle }}
+  </label>
+
+  <div class="flex flex-col gap-3">
+    <Button
+      color="blue"
+      size="md"
+      class="w-full"
+      :is-loading="submitting"
+      :disabled="submitting || !isValid"
+      :label="text.actions.save"
+      type="submit"
+    />
+    <Button
+      variant="ghost"
+      color="slate"
+      size="sm"
+      :label="text.actions.cancel"
+      type="button"
+      @click="emit('close')"
+    />
+  </div>
+
+  <div
+    v-if="status.show"
+    class="rounded-2xl border px-4 py-3"
+    :class="
+      status.ok
+        ? 'border-n-teal-8 bg-n-teal-2 text-n-teal-11'
+        : 'border-n-ruby-8 bg-n-ruby-2 text-n-ruby-11'
+    "
+  >
+    {{ status.msg }}
+  </div>
+</form>
