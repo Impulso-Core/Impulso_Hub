@@ -689,11 +689,18 @@ export function useEventsForm(props, emit) {
     try {
       const { data } = await axios.get(AGENTS_API);
       agents.value = Array.isArray(data?.items)
-        ? data.items.map(item => ({
-            id: item.id,
-            label: item.label,
-            number: item.number,
-          }))
+        ? data.items.map(item => {
+            const name = item.name || '';
+            const phoneLabel = item.label || item.number || '';
+            const display =
+              name && phoneLabel ? `${name} - ${phoneLabel}` : name || phoneLabel;
+            return {
+              id: item.id,
+              name,
+              label: display,
+              number: item.number,
+            };
+          })
         : [];
     } catch (_e) {
       useAlert(text.alerts.agents);
@@ -1134,6 +1141,17 @@ export function useEventsForm(props, emit) {
       hydrateFromValue(newValue);
     },
     { immediate: true }
+  );
+
+  // Define WhatsApp as the default channel once the dropdown becomes enabled
+  // (i.e., after the "Nome do agendamento" is filled and canSelectChannel becomes true)
+  watch(
+    canSelectChannel,
+    enabled => {
+      if (enabled && !form.channel) {
+        form.channel = 'whatsapp';
+      }
+    }
   );
 
   watch(
