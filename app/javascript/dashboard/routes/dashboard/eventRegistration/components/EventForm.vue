@@ -22,6 +22,8 @@ const {
   selectedTemplateKey,
   form,
   oneShot,
+  dailyWeekdays,
+  firstContactAll,
   submitting,
   status,
   csvReport,

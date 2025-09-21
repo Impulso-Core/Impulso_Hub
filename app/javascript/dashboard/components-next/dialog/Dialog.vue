@@ -52,7 +52,26 @@ const props = defineProps({
     type: String,
     default: 'lg',
     validator: value =>
-      ['7xl', '6xl', '5xl', '4xl', '3xl', '2xl', 'xl', 'lg', 'md', 'sm'].includes(value),
+      [
+        '7xl',
+        '6xl',
+        '5xl',
+        '4xl',
+        '3xl',
+        '2xl',
+        'xl',
+        'lg',
+        'md',
+        'sm',
+      ].includes(value),
+  },
+  closeOnClickOutside: {
+    type: Boolean,
+    default: true,
+  },
+  showCloseIcon: {
+    type: Boolean,
+    default: false,
   },
 });
 
@@ -107,22 +126,39 @@ defineExpose({ open, close });
       ]"
       @close="close"
     >
-      <OnClickOutside @trigger="close">
+      <OnClickOutside @trigger="closeOnClickOutside && close()">
         <form
           ref="dialogContentRef"
           class="flex flex-col w-full h-auto gap-6 p-6 overflow-visible text-left align-middle transition-all duration-300 ease-in-out transform bg-n-alpha-3 backdrop-blur-[100px] shadow-xl rounded-xl"
           @submit.prevent="confirm"
           @click.stop
         >
-          <div v-if="title || description" class="flex flex-col gap-2">
-            <h3 class="text-base font-medium leading-6 text-n-slate-12">
-              {{ title }}
-            </h3>
-            <slot name="description">
-              <p v-if="description" class="mb-0 text-sm text-n-slate-11">
-                {{ description }}
-              </p>
-            </slot>
+          <div
+            v-if="title || description || showCloseIcon"
+            class="flex items-start justify-between gap-2"
+          >
+            <div class="flex flex-col gap-2">
+              <h3
+                v-if="title"
+                class="text-base font-medium leading-6 text-n-slate-12"
+              >
+                {{ title }}
+              </h3>
+              <slot name="description">
+                <p v-if="description" class="mb-0 text-sm text-n-slate-11">
+                  {{ description }}
+                </p>
+              </slot>
+            </div>
+            <Button
+              v-if="showCloseIcon"
+              variant="ghost"
+              color="slate"
+              size="xs"
+              icon="i-lucide-x"
+              :aria-label="t('DIALOG.BUTTONS.CANCEL')"
+              @click="close"
+            />
           </div>
           <slot />
           <!-- Dialog content will be injected here -->

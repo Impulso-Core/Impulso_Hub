@@ -349,6 +349,8 @@
     <Dialog
       ref="formDialogRef"
       width="7xl"
+      :close-on-click-outside="false"
+      :show-close-icon="true"
       :overflow-y-auto="true"
       :title="
         selectedSchedule ? text.buttons.editSchedule : text.buttons.create

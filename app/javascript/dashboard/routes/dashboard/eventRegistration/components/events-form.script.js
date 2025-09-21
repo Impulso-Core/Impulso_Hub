@@ -34,10 +34,11 @@ export function useEventsForm(props, emit) {
     return options;
   }
   const TIME_OPTIONS = Object.freeze(generateTimeOptions(15));
+  const WEEKDAYS = Object.freeze(['MON', 'TUE', 'WED', 'THU', 'FRI']);
 
   const text = Object.freeze({
     name: {
-      label: 'Nome do agendamento',
+      label: 'Nome do agendamento', + '*'
       placeholder: 'Insira o nome do agendamento aqui',
     },
     channel: {
@@ -119,7 +120,7 @@ export function useEventsForm(props, emit) {
       day: message => message,
     },
     schedule: {
-      title: 'Agendamento',
+      title: 'Recorrência',
       description:
         'Configure uma execução única ou defina os dias/horários recorrentes.',
       runOnce: 'Agendar apenas uma vez (runAt)',
@@ -189,6 +190,7 @@ export function useEventsForm(props, emit) {
   });
 
   const oneShot = ref(false);
+  const dailyWeekdays = ref(false);
   const submitting = ref(false);
   const status = reactive({ show: false, ok: true, msg: '' });
   const csvReport = ref(null);
@@ -197,6 +199,7 @@ export function useEventsForm(props, emit) {
   const placeholderGlobalError = ref('');
   const placeholderDaysError = ref('');
   const templateFallback = ref(null);
+  const firstContactAll = ref(false);
 
   const isEdit = computed(() => Boolean(props.value?.Name));
   const isNameFilled = computed(() => !!form.name.trim());
@@ -242,7 +245,7 @@ export function useEventsForm(props, emit) {
   );
 
   const showFirstContactTemplate = computed(() =>
-    form.recipients.some(recipient => Boolean(recipient.primeiroContato))
+    Boolean(firstContactAll.value)
   );
 
   const variableEntries = computed(() => {
@@ -520,10 +523,12 @@ export function useEventsForm(props, emit) {
         placeholders.forEach((raw, normalized) => addPlaceholder(normalized, raw));
       });
     } else {
-      const messagePlaceholders = extractPlaceholders(form.payload?.message);
-      messagePlaceholders.forEach((raw, normalized) =>
-        addPlaceholder(normalized, raw)
-      );
+      if (oneShot.value) {
+        const messagePlaceholders = extractPlaceholders(form.payload?.message);
+        messagePlaceholders.forEach((raw, normalized) =>
+          addPlaceholder(normalized, raw)
+        );
+      }
       if (!oneShot.value) {
         const byDay = form.payload?.messagesByDay || {};
         form.daysOfWeek.forEach(day => {
@@ -627,6 +632,7 @@ export function useEventsForm(props, emit) {
     placeholderDaysError.value = '';
     templateFallback.value = null;
     knownVariables.value = new Map();
+    firstContactAll.value = false;
   }
 
   function hydrateFromValue(value) {
@@ -671,6 +677,9 @@ export function useEventsForm(props, emit) {
       }
     });
     form.customFields = Array.from(collected);
+
+    // Derive global first contact from existing recipients (legacy per-recipient data)
+    firstContactAll.value = form.recipients.some(r => Boolean(r.primeiroContato));
 
     const defaultPayload =
       form.channel === 'email'
@@ -864,7 +873,7 @@ export function useEventsForm(props, emit) {
         phone: form.channel === 'whatsapp' ? '' : undefined,
         email: form.channel === 'email' ? '' : undefined,
         vars,
-        primeiroContato: false,
+        primeiroContato: Boolean(firstContactAll.value),
       },
     ];
     nextTick(recomputeRequiredPlaceholders);
@@ -1005,7 +1014,7 @@ export function useEventsForm(props, emit) {
               name,
               email,
               vars,
-              primeiroContato: false,
+              primeiroContato: Boolean(firstContactAll.value),
             });
             imported += 1;
           } else {
@@ -1023,7 +1032,7 @@ export function useEventsForm(props, emit) {
               name,
               phone: normalizedPhone,
               vars,
-              primeiroContato: false,
+              primeiroContato: Boolean(firstContactAll.value),
             });
             imported += 1;
           }
@@ -1077,13 +1086,27 @@ export function useEventsForm(props, emit) {
     URL.revokeObjectURL(link.href);
   }
 
+  function deriveEnabledFromPeriod() {
+    const now = new Date();
+    const start = form.startAt ? new Date(form.startAt) : null;
+    const end = form.endAt ? new Date(form.endAt) : null;
+    const okStart = !start || !Number.isNaN(start.getTime());
+    const okEnd = !end || !Number.isNaN(end?.getTime());
+
+    if (!okStart && !okEnd) return true;
+    if (okStart && okEnd && start && end) return now >= start && now <= end;
+    if (okStart && start && (!end || !okEnd)) return now >= start;
+    if (okEnd && end && (!start || !okStart)) return now <= end;
+    return true;
+  }
+
   function buildPayload() {
     const recipientsPayload = form.recipients.map(recipient => ({
       name: recipient.name || '',
       email: recipient.email,
       phone: recipient.phone,
       vars: recipient.vars || {},
-      primeiroContato: Boolean(recipient.primeiroContato),
+      primeiroContato: Boolean(firstContactAll.value),
     }));
 
     const templateFallbackPayload =
@@ -1099,17 +1122,19 @@ export function useEventsForm(props, emit) {
         html: form.payload?.html || '',
       };
     } else {
-      channelPayload = {
-        message: form.payload?.message || 'Olá {{name}}!',
-        messagesByDay:
-          !oneShot.value && form.channel === 'whatsapp'
-            ? form.daysOfWeek.reduce((acc, day) => {
-                const value = (form.payload?.messagesByDay?.[day] || '').trim();
-                if (value) acc[day] = value;
-                return acc;
-              }, {})
-            : undefined,
-      };
+      if (oneShot.value) {
+        channelPayload = {
+          message: form.payload?.message || 'Olá {{name}}!',
+        };
+      } else {
+        channelPayload = {
+          messagesByDay: form.daysOfWeek.reduce((acc, day) => {
+            const value = (form.payload?.messagesByDay?.[day] || '').trim();
+            if (value) acc[day] = value;
+            return acc;
+          }, {}),
+        };
+      }
 
       if (templateFallbackPayload) {
         channelPayload.template_fallback = templateFallbackPayload;
@@ -1122,7 +1147,7 @@ export function useEventsForm(props, emit) {
       agent: form.channel === 'whatsapp' ? form.agent || undefined : undefined,
       recipients: recipientsPayload,
       payload: channelPayload,
-      enabled: Boolean(form.enabled),
+      enabled: deriveEnabledFromPeriod(),
       startAt: form.startAt?.trim() || undefined,
       endAt: form.endAt?.trim() || undefined,
     };
@@ -1270,6 +1295,15 @@ export function useEventsForm(props, emit) {
     }
   );
 
+  watch(dailyWeekdays, val => {
+    if (val) {
+      form.daysOfWeek = WEEKDAYS.slice();
+    } else {
+      // Ao desmarcar "Disparo diário (úteis)", limpamos a seleção de dias
+      form.daysOfWeek = [];
+    }
+  });
+
   watch(
     () => form.agent,
     value => {
@@ -1337,6 +1371,8 @@ export function useEventsForm(props, emit) {
     selectedTemplateKey,
     form,
     oneShot,
+    dailyWeekdays,
+    firstContactAll,
     submitting,
     status,
     csvReport,
