@@ -12,6 +12,7 @@ const {
   // constants/text
   text,
   DAYS_OF_WEEK,
+  TIME_OPTIONS,
 
   // state
   agents,
@@ -31,6 +32,8 @@ const {
   templateFallback,
 
   // computed
+  startDate,
+  endDate,
   isEdit,
   isNameFilled,
   canSelectChannel,

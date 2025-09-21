@@ -21,6 +21,20 @@ export function useEventsForm(props, emit) {
     { value: 'SUN', label: 'Domingo' },
   ];
 
+  function pad(n) {
+    return String(n).padStart(2, '0');
+  }
+  function generateTimeOptions(step = 15) {
+    const options = [];
+    for (let h = 0; h < 24; h += 1) {
+      for (let m = 0; m < 60; m += step) {
+        options.push(`${pad(h)}:${pad(m)}`);
+      }
+    }
+    return options;
+  }
+  const TIME_OPTIONS = Object.freeze(generateTimeOptions(15));
+
   const text = Object.freeze({
     name: {
       label: 'Nome do agendamento',
@@ -122,9 +136,9 @@ export function useEventsForm(props, emit) {
       missingMessage: day => `Obrigatório para ${day}.`,
     },
     timeframe: {
-      start: 'Início (startAt, UTC)',
+      start: 'Dt. de Início:',
       startPlaceholder: '2025-09-01T00:00:00Z',
-      end: 'Fim (endAt, UTC)',
+      end: 'Dt. de Fim:',
       endPlaceholder: '2025-12-31T23:59:59Z',
       error: 'A data de fim deve ser posterior à data de início.',
     },
@@ -199,6 +213,26 @@ export function useEventsForm(props, emit) {
       return true;
     return endDate > startDate;
   });
+
+  const startDate = computed({
+    get: () => (form.startAt ? form.startAt.substring(0, 10) : ''),
+    set: v => {
+      form.startAt = v ? `${v}T00:00:00Z` : '';
+    },
+  });
+
+  const endDate = computed({
+    get: () => (form.endAt ? form.endAt.substring(0, 10) : ''),
+    set: v => {
+      form.endAt = v ? `${v}T23:59:59Z` : '';
+    },
+  });
+
+  function initDefaultDates() {
+    const today = new Date().toISOString().slice(0, 10);
+    if (!form.startAt) form.startAt = `${today}T00:00:00Z`;
+    if (!form.endAt) form.endAt = `${today}T23:59:59Z`;
+  }
 
   const selectedTemplate = computed(
     () =>
@@ -1271,7 +1305,7 @@ export function useEventsForm(props, emit) {
       if (oneShot.value) {
         form.daysOfWeek = [];
         form.time = '';
-        form.timezone = '';
+        // Keep timezone set to default; do not clear it
       } else {
         form.runAt = '';
         if (!form.daysOfWeek.length) form.daysOfWeek = ['MON'];
@@ -1285,6 +1319,7 @@ export function useEventsForm(props, emit) {
   onMounted(() => {
     loadAgents();
     if (form.channel === 'whatsapp' && form.agent) loadTemplates();
+    initDefaultDates();
     recomputeRequiredPlaceholders();
   });
 
@@ -1292,6 +1327,7 @@ export function useEventsForm(props, emit) {
     // constants/text
     text,
     DAYS_OF_WEEK,
+    TIME_OPTIONS,
 
     // state
     agents,
@@ -1311,6 +1347,8 @@ export function useEventsForm(props, emit) {
     templateFallback,
 
     // computed
+    startDate,
+    endDate,
     isEdit,
     isNameFilled,
     canSelectChannel,

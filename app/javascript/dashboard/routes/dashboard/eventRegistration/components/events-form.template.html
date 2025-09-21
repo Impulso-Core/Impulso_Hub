@@ -401,19 +401,9 @@
           :placeholder="text.schedule.runAtPlaceholder"
         />
       </div>
-      <div class="flex flex-col gap-2">
-        <label class="text-xs font-semibold uppercase tracking-wide text-n-slate-9">
-          {{ text.schedule.timezone }}
-        </label>
-        <input
-          :value="text.schedule.timezoneStatic"
-          disabled
-          class="rounded-xl border border-dashed border-n-weak bg-n-solid-2 px-4 py-3 text-sm text-n-slate-10"
-        />
-      </div>
     </div>
 
-    <div v-else class="grid gap-4 md:grid-cols-3">
+    <div v-else class="grid gap-4 md:grid-cols-2">
       <div class="flex flex-col gap-3">
         <span class="text-xs font-semibold uppercase tracking-wide text-n-slate-9">
           {{ text.schedule.days }}
@@ -438,21 +428,18 @@
         <label class="text-xs font-semibold uppercase tracking-wide text-n-slate-9">
           {{ text.schedule.time }}
         </label>
-        <input
+        <select
           v-model="form.time"
           class="rounded-xl border border-n-weak bg-n-background px-4 py-3 text-sm text-n-slate-12 focus:border-n-brand focus:outline-none"
-          :placeholder="text.schedule.timePlaceholder"
-        />
-      </div>
-      <div class="flex flex-col gap-2">
-        <label class="text-xs font-semibold uppercase tracking-wide text-n-slate-9">
-          {{ text.schedule.timezone }}
-        </label>
-        <input
-          v-model="form.timezone"
-          class="rounded-xl border border-n-weak bg-n-background px-4 py-3 text-sm text-n-slate-12 focus:border-n-brand focus:outline-none"
-          :placeholder="text.schedule.timezonePlaceholder"
-        />
+        >
+          <option
+            v-for="opt in TIME_OPTIONS"
+            :key="opt"
+            :value="opt"
+          >
+            {{ opt }}
+          </option>
+        </select>
       </div>
     </div>
 
@@ -510,9 +497,9 @@
         {{ text.timeframe.start }}
       </label>
       <input
-        v-model="form.startAt"
+        v-model="startDate"
+        type="date"
         class="rounded-xl border border-n-weak bg-n-background px-4 py-3 text-sm text-n-slate-12 focus:border-n-brand focus:outline-none"
-        :placeholder="text.timeframe.startPlaceholder"
       />
     </div>
     <div class="flex flex-col gap-2">
@@ -520,9 +507,9 @@
         {{ text.timeframe.end }}
       </label>
       <input
-        v-model="form.endAt"
+        v-model="endDate"
+        type="date"
         class="rounded-xl border border-n-weak bg-n-background px-4 py-3 text-sm text-n-slate-12 focus:border-n-brand focus:outline-none"
-        :placeholder="text.timeframe.endPlaceholder"
       />
     </div>
     <p
