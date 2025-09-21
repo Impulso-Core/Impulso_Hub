@@ -38,7 +38,7 @@ export function useEventsForm(props, emit) {
 
   const text = Object.freeze({
     name: {
-      label: 'Nome do agendamento', + '*'
+      label: 'Nome do agendamento', 
       placeholder: 'Insira o nome do agendamento aqui',
     },
     channel: {
