@@ -1,5 +1,5 @@
 <script setup>
-/* eslint-disable no-unused-vars */
+/* eslint-disable no-unused-vars, vue/no-unused-properties */
 import Button from 'dashboard/components-next/button/Button.vue';
 import { useEventsForm } from './events-form.script.js';
 
@@ -45,6 +45,7 @@ const {
   showFirstContactTemplate,
   variableEntries,
   variableLabelMap,
+  isValid,
 
   // methods
   recomputeRequiredPlaceholders,

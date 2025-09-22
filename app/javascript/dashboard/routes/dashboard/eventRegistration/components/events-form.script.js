@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue';
 import axios from 'axios';
 import { useAlert } from 'dashboard/composables';
+import { de } from 'date-fns/locale';
 
 export function useEventsForm(props, emit) {
   const API_BASE =
@@ -46,7 +47,7 @@ export function useEventsForm(props, emit) {
       placeholder: 'Selecionar canal',
       options: {
         whatsapp: 'WhatsApp',
-        email: 'Email (SES)',
+        // email: 'Email (SES)',
       },
     },
     tooltips: {
@@ -167,6 +168,7 @@ export function useEventsForm(props, emit) {
     headers: { 'Content-Type': 'application/json' },
   });
 
+  const originalName = ref('');   
   const agents = ref([]);
   const agentsLoading = ref(false);
   const templates = ref([]);
@@ -201,7 +203,8 @@ export function useEventsForm(props, emit) {
   const templateFallback = ref(null);
   const firstContactAll = ref(false);
 
-  const isEdit = computed(() => Boolean(props.value?.Name));
+  const isEdit = computed(() => Boolean(originalName.value));
+
   const isNameFilled = computed(() => !!form.name.trim());
   const canSelectChannel = computed(() => isNameFilled.value);
   const canSelectAgent = computed(() => canSelectChannel.value && !!form.channel);
@@ -609,8 +612,9 @@ export function useEventsForm(props, emit) {
 
   function resetForm() {
     form.name = '';
+    originalName.value = ''; 
     form.channel = '';
-    form.agent = '';
+    form.agent = '';  
     form.recipients = [];
     form.payload = { message: 'Olá {{name}}!', messagesByDay: {} };
     form.customFields = [];
@@ -638,6 +642,7 @@ export function useEventsForm(props, emit) {
   function hydrateFromValue(value) {
     if (!value) {
       resetForm();
+      originalName.value = '';  // << NOVO
       recomputeRequiredPlaceholders();
       if (form.channel === 'whatsapp' && form.agent) {
         loadTemplates();
@@ -649,6 +654,7 @@ export function useEventsForm(props, emit) {
     }
 
     form.name = value.Name || '';
+    originalName.value = value.Name || value.name || '';  // << NOVO
     form.channel = value.Channel || '';
     form.agent = value.Agent || '';
     form.recipients = Array.isArray(value.Recipients)
@@ -1174,7 +1180,8 @@ export function useEventsForm(props, emit) {
     try {
       const payload = buildPayload();
       if (isEdit.value) {
-        await api.put(`/${encodeURIComponent(form.name)}`, payload);
+        debugger;
+        await api.put(`/${encodeURIComponent(originalName.value)}`, payload); // << ALTERADO
         status.show = true;
         status.ok = true;
         status.msg = text.status.updated;
@@ -1394,6 +1401,7 @@ export function useEventsForm(props, emit) {
     showFirstContactTemplate,
     variableEntries,
     variableLabelMap,
+    isValid,
 
     // methods
     recomputeRequiredPlaceholders,
