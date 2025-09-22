@@ -24,6 +24,10 @@ const {
   oneShot,
   dailyWeekdays,
   firstContactAll,
+  // masked inputs
+  runAtDate,
+  runAtTime,
+  timeInput,
   submitting,
   status,
   csvReport,
@@ -41,6 +45,10 @@ const {
   canSelectChannel,
   canSelectAgent,
   validDateRange,
+  // validation flags for masked inputs
+  isValidRunAtDate,
+  isValidRunAtTime,
+  isValidRecurringTime,
   selectedTemplate,
   showFirstContactTemplate,
   variableEntries,
@@ -63,6 +71,10 @@ const {
   handleCsvUpload,
   downloadCsvTemplate,
   buildPayload,
+  onRunAtDateInput,
+  onRunAtTimeInput,
+  onRecurringTimeInput,
+  onStrictTimeKeydown,
   submit,
 } = useEventsForm(props, emit);
 </script>

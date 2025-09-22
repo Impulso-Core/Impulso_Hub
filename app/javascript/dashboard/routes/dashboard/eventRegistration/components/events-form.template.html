@@ -186,7 +186,12 @@
       <div class="flex flex-wrap items-center gap-2">
         <select
           v-model="selectedTemplateKey"
-          class="w-full rounded-xl border border-n-weak bg-n-background px-4 py-3 text-sm text-n-slate-12 focus:border-n-brand focus:outline-none"
+          :class="[
+            'w-full rounded-xl px-4 py-3 text-sm text-n-slate-12 focus:outline-none',
+            'bg-n-background',
+            'border',
+            showFirstContactTemplate && !selectedTemplate ? 'border-n-ruby-8' : 'border-n-weak'
+          ]"
           :disabled="templatesLoading || !templates.length"
         >
           <option value="" disabled>
@@ -237,6 +242,9 @@
         />
       </div>
 
+      <p v-if="showFirstContactTemplate && !selectedTemplate" class="text-xs text-n-ruby-11">
+        {{ text.content.templateSelect.required }}
+      </p>
       <p v-if="selectedTemplate?.placeholders.length" class="text-xs text-n-slate-10">
         {{ text.content.templatePlaceholders }}
         <span
@@ -416,11 +424,29 @@
         <label class="text-xs font-semibold uppercase tracking-wide text-n-slate-9">
           {{ text.schedule.runAt }}
         </label>
-        <input
-          v-model="form.runAt"
-          class="rounded-xl border border-n-weak bg-n-background px-4 py-3 text-sm text-n-slate-12 focus:border-n-brand focus:outline-none"
-          :placeholder="text.schedule.runAtPlaceholder"
-        />
+        <div class="grid grid-cols-[1fr_auto] gap-2">
+          <input
+            :value="runAtDate"
+            @input="onRunAtDateInput"
+            inputmode="numeric"
+            maxlength="10"
+            placeholder="DD/MM/AAAA"
+            class="rounded-xl border bg-n-background px-4 py-3 text-sm text-n-slate-12 focus:border-n-brand focus:outline-none"
+            :class="isValidRunAtDate || !runAtDate ? 'border-n-weak' : 'border-n-ruby-8'"
+          />
+          <input
+            :value="runAtTime"
+            @input="onRunAtTimeInput"
+            @keydown="onStrictTimeKeydown"
+            inputmode="numeric"
+            maxlength="5"
+            placeholder="HH:MM"
+            class="rounded-xl border bg-n-background px-4 py-3 text-sm text-n-slate-12 focus:border-n-brand focus:outline-none"
+            :class="isValidRunAtTime || !runAtTime ? 'border-n-weak' : 'border-n-ruby-8'"
+          />
+        </div>
+        <p v-if="runAtDate && !isValidRunAtDate" class="text-xs text-n-ruby-11">Data inválida. Use DD/MM/AAAA.</p>
+        <p v-if="runAtTime && !isValidRunAtTime" class="text-xs text-n-ruby-11">Horário inválido. Informe um horário entre 00:00 e 23:59.</p>
       </div>
     </div>
 
@@ -449,18 +475,19 @@
         <label class="text-xs font-semibold uppercase tracking-wide text-n-slate-9">
           {{ text.schedule.time }}
         </label>
-        <select
-          v-model="form.time"
-          class="rounded-xl border border-n-weak bg-n-background px-4 py-3 text-sm text-n-slate-12 focus:border-n-brand focus:outline-none"
-        >
-          <option
-            v-for="opt in TIME_OPTIONS"
-            :key="opt"
-            :value="opt"
-          >
-            {{ opt }}
-          </option>
-        </select>
+        <input
+          :value="timeInput"
+          @input="onRecurringTimeInput"
+          @keydown="onStrictTimeKeydown"
+          inputmode="numeric"
+          maxlength="5"
+          :placeholder="text.schedule.timePlaceholder"
+          class="rounded-xl border bg-n-background px-4 py-3 text-sm text-n-slate-12 focus:border-n-brand focus:outline-none"
+          :class="isValidRecurringTime || !timeInput ? 'border-n-weak' : 'border-n-ruby-8'"
+        />
+        <p v-if="timeInput && !isValidRecurringTime" class="text-xs text-n-ruby-11">
+          Informe um horário entre 00:00 e 23:59.
+        </p>
       </div>
     </div>
 

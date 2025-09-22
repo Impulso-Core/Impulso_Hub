@@ -37,6 +37,193 @@ export function useEventsForm(props, emit) {
   const TIME_OPTIONS = Object.freeze(generateTimeOptions(15));
   const WEEKDAYS = Object.freeze(['MON', 'TUE', 'WED', 'THU', 'FRI']);
 
+  // Input mask helpers and validators
+  function onlyDigits(s) {
+    return (s || '').replace(/\D/g, '');
+  }
+  function maskDateDDMMYYYY(raw) {
+    const d = onlyDigits(raw).slice(0, 8);
+    if (d.length <= 2) return d;
+    if (d.length <= 4) return `${d.slice(0, 2)}/${d.slice(2)}`;
+    return `${d.slice(0, 2)}/${d.slice(2, 4)}/${d.slice(4)}`;
+  }
+  function daysInMonth(y, m) {
+    // m is 1..12
+    return new Date(Date.UTC(y, m, 0)).getUTCDate();
+  }
+  function isValidDateDMY(str) {
+    if (typeof str !== 'string') return false;
+    const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(str);
+    if (!m) return false;
+    const dd = Number(m[1]);
+    const mm = Number(m[2]);
+    const yyyy = Number(m[3]);
+    if (yyyy < 1900 || yyyy > 9999) return false;
+    if (mm < 1 || mm > 12) return false;
+    if (dd < 1 || dd > daysInMonth(yyyy, mm)) return false;
+    return true;
+  }
+  function maskTimeHHMM(raw) {
+    const n = onlyDigits(raw).slice(0, 4);
+    if (n.length <= 2) return n;
+    return `${n.slice(0, 2)}:${n.slice(2)}`;
+  }
+  function isValidTimeHHMM(str) {
+    if (typeof str !== 'string') return false;
+    const m = /^(\d{2}):(\d{2})$/.exec(str);
+    if (!m) return false;
+    const hh = Number(m[1]);
+    const mm = Number(m[2]);
+    if (hh < 0 || hh > 23) return false;
+    if (mm < 0 || mm > 59) return false;
+    return true;
+  }
+  // Strict time masker: builds HH:MM and ignores invalid keystrokes (prevents >23:59)
+  function maskTimeHHMMStrict(raw) {
+    const d = onlyDigits(raw).slice(0, 4);
+    let outH1 = '';
+    let outH2 = '';
+    let outM1 = '';
+    let outM2 = '';
+
+    for (let i = 0; i < d.length; i += 1) {
+      const ch = d[i];
+      if (i === 0) {
+        // First hour digit must be 0-2
+        if (ch >= '0' && ch <= '2') outH1 = ch;
+      } else if (i === 1) {
+        if (!outH1) break;
+        // Second hour digit: if first is 2 then 0-3, else 0-9
+        if (outH1 === '2') {
+          if (ch >= '0' && ch <= '3') outH2 = ch;
+        } else {
+          outH2 = ch;
+        }
+      } else if (i === 2) {
+        // First minute digit 0-5
+        if (ch >= '0' && ch <= '5') outM1 = ch;
+      } else if (i === 3) {
+        // Second minute digit 0-9
+        outM2 = ch;
+      }
+    }
+
+    let res = '';
+    if (outH1) res += outH1;
+    if (outH2) res += outH2;
+    if (res.length > 0 && (outM1 || outM2)) res += ':';
+    if (outM1) res += outM1;
+    if (outM2) res += outM2;
+    return res;
+  }
+  function toISOFromDMYAndHM(dmy, hm) {
+    const dm = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(dmy);
+    const tm = /^(\d{2}):(\d{2})$/.exec(hm);
+    if (!dm || !tm) return '';
+    const dd = Number(dm[1]);
+    const mm = Number(dm[2]);
+    const yyyy = Number(dm[3]);
+    const hh = Number(tm[1]);
+    const min = Number(tm[2]);
+    const iso = new Date(Date.UTC(yyyy, mm - 1, dd, hh, min, 0, 0)).toISOString();
+    return iso.replace('.000Z', 'Z');
+  }
+  function isoToDMY(iso) {
+    const dt = new Date(iso);
+    if (Number.isNaN(dt.getTime())) return '';
+    return `${pad(dt.getUTCDate())}/${pad(dt.getUTCMonth() + 1)}/${dt.getUTCFullYear()}`;
+  }
+  function isoToHM(iso) {
+    const dt = new Date(iso);
+    if (Number.isNaN(dt.getTime())) return '';
+    return `${pad(dt.getUTCHours())}:${pad(dt.getUTCMinutes())}`;
+  }
+
+  // Validation state derived from inputs
+  const isValidRunAtDate = computed(() => isValidDateDMY(runAtDate.value));
+  const isValidRunAtTime = computed(() => isValidTimeHHMM(runAtTime.value));
+  const isValidRecurringTime = computed(() => isValidTimeHHMM(timeInput.value));
+
+  // Input handlers (mask as user types)
+  function onRunAtDateInput(e) {
+    const masked = maskDateDDMMYYYY(e.target.value);
+    if (e && e.target) e.target.value = masked;
+    runAtDate.value = masked;
+  }
+  function onRunAtTimeInput(e) {
+    const masked = maskTimeHHMMStrict(e.target.value);
+    if (e && e.target) e.target.value = masked;
+    runAtTime.value = masked;
+  }
+  function onRecurringTimeInput(e) {
+    const masked = maskTimeHHMMStrict(e.target.value);
+    if (e && e.target) e.target.value = masked;
+    timeInput.value = masked;
+  }
+
+  // Prevent typing invalid hours/minutes (blocks > 23:59 at the keystroke)
+  function onStrictTimeKeydown(e) {
+    const key = e.key;
+
+    // Allow control/navigation keys and shortcuts
+    if (
+      key === 'Backspace' ||
+      key === 'Delete' ||
+      key === 'Tab' ||
+      key === 'ArrowLeft' ||
+      key === 'ArrowRight' ||
+      key === 'Home' ||
+      key === 'End'
+    ) {
+      return;
+    }
+    if (e.ctrlKey || e.metaKey) {
+      return; // allow copy/paste/select-all shortcuts
+    }
+
+    // Only digits are allowed to be typed
+    if (!/^\d$/.test(key)) {
+      e.preventDefault();
+      return;
+    }
+
+    // Determine how many digits are currently present (ignoring colon)
+    const input = e.target;
+    const currentDigits = onlyDigits(input.value);
+    const selectionLength =
+      input.selectionStart != null && input.selectionEnd != null
+        ? Math.max(0, input.selectionEnd - input.selectionStart)
+        : 0;
+
+    // Effective digits that will remain before adding this key
+    const effectiveLen = Math.max(0, currentDigits.length - selectionLength);
+
+    // Enforce per-position constraints
+    if (effectiveLen === 0) {
+      // First hour digit: 0-2
+      if (key > '2') e.preventDefault();
+      return;
+    }
+    if (effectiveLen === 1) {
+      // Second hour digit: if first is 2 then 0-3 else 0-9
+      const h1 = currentDigits[0];
+      if (h1 === '2' && key > '3') e.preventDefault();
+      return;
+    }
+    if (effectiveLen === 2) {
+      // First minute digit: 0-5
+      if (key > '5') e.preventDefault();
+      return;
+    }
+    if (effectiveLen === 3) {
+      // Second minute digit: 0-9 (all digits ok)
+      return;
+    }
+
+    // Already have 4 digits, block extra numeric input
+    e.preventDefault();
+  }
+
   const text = Object.freeze({
     name: {
       label: 'Nome do agendamento', 
@@ -108,6 +295,7 @@ export function useEventsForm(props, emit) {
         loading: 'Carregando templates...',
         placeholder: 'Selecionar template...',
         empty: 'Nenhum template encontrado',
+        required: 'Selecione um template de primeiro contato.',
       },
       templateActions: {
         reload: 'Recarregar',
@@ -202,6 +390,10 @@ export function useEventsForm(props, emit) {
   const placeholderDaysError = ref('');
   const templateFallback = ref(null);
   const firstContactAll = ref(false);
+  // Masked inputs for one-shot runAt and recurring time
+  const runAtDate = ref('');
+  const runAtTime = ref('');
+  const timeInput = ref('');
 
   const isEdit = computed(() => Boolean(originalName.value));
 
@@ -498,11 +690,17 @@ export function useEventsForm(props, emit) {
     if (!dayConfigurationValid) return false;
 
     if (form.channel === 'whatsapp' && showFirstContactTemplate.value) {
-      const allDaysHaveMessage = form.daysOfWeek.every(day => {
-        const content = form.payload?.messagesByDay?.[day] || '';
-        return Boolean(content.trim());
-      });
-      if (!allDaysHaveMessage) return false;
+      // Require selecting a first-contact template when the toggle is enabled
+      if (!selectedTemplate.value) return false;
+
+      // For recurring schedule (not one-shot), also require messages for all selected days
+      if (!oneShot.value) {
+        const allDaysHaveMessage = form.daysOfWeek.every(day => {
+          const content = form.payload?.messagesByDay?.[day] || '';
+          return Boolean(content.trim());
+        });
+        if (!allDaysHaveMessage) return false;
+      }
     }
 
     return true;
@@ -637,6 +835,11 @@ export function useEventsForm(props, emit) {
     templateFallback.value = null;
     knownVariables.value = new Map();
     firstContactAll.value = false;
+
+    // Reset masked inputs
+    runAtDate.value = '';
+    runAtTime.value = '';
+    timeInput.value = form.time || '';
   }
 
   function hydrateFromValue(value) {
@@ -705,14 +908,21 @@ export function useEventsForm(props, emit) {
     if (value.RunAt) {
       oneShot.value = true;
       form.runAt = value.RunAt;
+      // Initialize masked inputs from ISO UTC
+      runAtDate.value = isoToDMY(value.RunAt);
+      runAtTime.value = isoToHM(value.RunAt);
       form.daysOfWeek = [];
       form.time = '';
+      timeInput.value = '';
       form.timezone = '';
     } else {
       oneShot.value = false;
       form.runAt = '';
+      runAtDate.value = '';
+      runAtTime.value = '';
       form.daysOfWeek = value.DaysOfWeek || ['MON'];
       form.time = value.Time || '08:00';
+      timeInput.value = form.time || '';
       form.timezone = value.Timezone || 'America/Sao_Paulo';
     }
 
@@ -1174,13 +1384,13 @@ export function useEventsForm(props, emit) {
   }
 
   async function submit() {
+    debugger;
     if (!isValid.value || submitting.value) return;
     submitting.value = true;
     status.show = false;
     try {
       const payload = buildPayload();
       if (isEdit.value) {
-        debugger;
         await api.put(`/${encodeURIComponent(originalName.value)}`, payload); // << ALTERADO
         status.show = true;
         status.ok = true;
@@ -1311,6 +1521,34 @@ export function useEventsForm(props, emit) {
     }
   });
 
+  // Compose ISO runAt when both inputs are valid
+  watch([runAtDate, runAtTime], ([d, t]) => {
+    if (isValidDateDMY(d) && isValidTimeHHMM(t)) {
+      form.runAt = toISOFromDMYAndHM(d, t);
+    } else {
+      form.runAt = '';
+    }
+  });
+
+  // Reflect timeInput into form.time only when valid (enforces HH:MM 00:00..23:59)
+  watch(timeInput, v => {
+    if (isValidTimeHHMM(v)) {
+      form.time = v;
+    } else {
+      form.time = '';
+    }
+  });
+
+  // Keep timeInput in sync when form.time changes (e.g., hydration or defaults)
+  watch(
+    () => form.time,
+    v => {
+      if (!oneShot.value) {
+        timeInput.value = v || '';
+      }
+    }
+  );
+
   watch(
     () => form.agent,
     value => {
@@ -1346,12 +1584,16 @@ export function useEventsForm(props, emit) {
       if (oneShot.value) {
         form.daysOfWeek = [];
         form.time = '';
+        timeInput.value = '';
         // Keep timezone set to default; do not clear it
       } else {
         form.runAt = '';
+        runAtDate.value = '';
+        runAtTime.value = '';
         if (!form.daysOfWeek.length) form.daysOfWeek = ['MON'];
         if (!form.time) form.time = '08:00';
         if (!form.timezone) form.timezone = 'America/Sao_Paulo';
+        timeInput.value = form.time || '';
       }
       nextTick(recomputeRequiredPlaceholders);
     }
@@ -1361,6 +1603,13 @@ export function useEventsForm(props, emit) {
     loadAgents();
     if (form.channel === 'whatsapp' && form.agent) loadTemplates();
     initDefaultDates();
+    // Initialize masked inputs based on current form values
+    if (oneShot.value && form.runAt) {
+      runAtDate.value = isoToDMY(form.runAt);
+      runAtTime.value = isoToHM(form.runAt);
+    } else {
+      timeInput.value = form.time || '';
+    }
     recomputeRequiredPlaceholders();
   });
 
@@ -1380,6 +1629,10 @@ export function useEventsForm(props, emit) {
     oneShot,
     dailyWeekdays,
     firstContactAll,
+    // masked inputs
+    runAtDate,
+    runAtTime,
+    timeInput,
     submitting,
     status,
     csvReport,
@@ -1397,6 +1650,10 @@ export function useEventsForm(props, emit) {
     canSelectChannel,
     canSelectAgent,
     validDateRange,
+    // validation flags for masked inputs
+    isValidRunAtDate,
+    isValidRunAtTime,
+    isValidRecurringTime,
     selectedTemplate,
     showFirstContactTemplate,
     variableEntries,
@@ -1419,6 +1676,11 @@ export function useEventsForm(props, emit) {
     handleCsvUpload,
     downloadCsvTemplate,
     buildPayload,
+    // input handlers
+    onRunAtDateInput,
+    onRunAtTimeInput,
+    onRecurringTimeInput,
+    onStrictTimeKeydown,
     submit,
   };
 }
