@@ -53,6 +53,39 @@ export function useEventsForm(props, emit) {
   function onlyDigits(s) {
     return (s || '').replace(/\D/g, '');
   }
+
+  function expandScientificNotation(raw) {
+    const trimmed = (raw ?? '').toString().trim();
+    if (!trimmed) return '';
+    const normalized = trimmed.replace(',', '.');
+    const match = /^([-+]?\d+(?:\.\d+)?)e\+?(\d+)$/i.exec(normalized);
+    if (!match) return trimmed;
+
+    const mantissa = match[1];
+    const exponent = Number(match[2]);
+    if (!Number.isFinite(exponent)) return trimmed;
+
+    const sign = mantissa.startsWith('-') ? '-' : '';
+    const unsignedMantissa = mantissa.replace(/^[+-]/, '');
+    const [integerPart, fractionalPart = ''] = unsignedMantissa.split('.');
+    const digits = integerPart + fractionalPart;
+    const shift = exponent - fractionalPart.length;
+
+    if (shift >= 0) {
+      return sign + digits + '0'.repeat(shift);
+    }
+
+    const splitIndex = digits.length + shift;
+    if (splitIndex <= 0) {
+      return sign + '0.' + '0'.repeat(-splitIndex) + digits;
+    }
+
+    return sign + digits.slice(0, splitIndex) + '.' + digits.slice(splitIndex);
+  }
+
+  function extractPhoneDigits(raw) {
+    return onlyDigits(expandScientificNotation(raw));
+  }
   function maskDateDDMMYYYY(raw) {
     const d = onlyDigits(raw).slice(0, 8);
     if (d.length <= 2) return d;
@@ -813,13 +846,17 @@ export function useEventsForm(props, emit) {
   }
 
   function isLikelyPhone(phone) {
-    const digits = onlyDigits(phone);
-    if (!hasPhoneDigits(phone)) return false;
-    return digits.length >= 10 && digits.length <= PHONE_MAX_DIGITS;
+    const digits = extractPhoneDigits(phone);
+    if (!digits) return false;
+    if (digits.length > PHONE_MAX_DIGITS) return false;
+    if (digits.startsWith('55')) {
+      return digits.length >= 12;
+    }
+    return digits.length >= 10;
   }
 
   function normalizePhoneValue(raw) {
-    const digits = onlyDigits(raw);
+    const digits = extractPhoneDigits(raw);
     let normalized = digits.startsWith('55') ? digits : `55${digits}`;
     normalized = normalized.replace(/^55+/, '55');
     normalized = normalized.slice(0, PHONE_MAX_DIGITS);
@@ -829,7 +866,7 @@ export function useEventsForm(props, emit) {
   }
 
   function hasPhoneDigits(value) {
-    const digits = onlyDigits(value);
+    const digits = extractPhoneDigits(value);
     if (!digits) return false;
     if (digits.startsWith('55')) {
       return digits.length > 2;
