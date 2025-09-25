@@ -41,12 +41,12 @@ export function useEventsForm(props, emit) {
     }
     return options;
   }
-  const TIME_OPTIONS = Object.freeze(generateTimeOptions(5));
+  const TIME_OPTIONS = Object.freeze(generateTimeOptions(15));
   const WEEKDAYS = Object.freeze(['MON', 'TUE', 'WED', 'THU', 'FRI']);
   const BRT_TIMEZONE = 'America/Sao_Paulo';
   const MIN_FUTURE_MINUTES = 3; // minimal buffer before upcoming slot becomes unavailable
   const NAME_ALLOWED_REGEX = /^[A-Za-z0-9_-]+$/;
-  const PHONE_MAX_DIGITS = 15;
+  const PHONE_MAX_DIGITS = 13;
 
   // Input mask helpers and validators
   function onlyDigits(s) {
@@ -810,14 +810,28 @@ export function useEventsForm(props, emit) {
   }
 
   function isLikelyPhone(phone) {
-    const digits = (phone || '').replace(/\D/g, '');
-    return digits.length >= 10 && digits.length <= 15;
+    const digits = onlyDigits(phone);
+    if (!hasPhoneDigits(phone)) return false;
+    return digits.length >= 10 && digits.length <= PHONE_MAX_DIGITS;
   }
 
   function normalizePhoneValue(raw) {
-    const digits = onlyDigits(raw).slice(0, PHONE_MAX_DIGITS);
-    if (!digits) return '';
-    return `+${digits}`;
+    const digits = onlyDigits(raw);
+    let normalized = digits.startsWith('55') ? digits : `55${digits}`;
+    normalized = normalized.replace(/^55+/, '55');
+    normalized = normalized.slice(0, PHONE_MAX_DIGITS);
+    if (!normalized) return '+55';
+    if (normalized === '55') return '+55';
+    return `+${normalized}`;
+  }
+
+  function hasPhoneDigits(value) {
+    const digits = onlyDigits(value);
+    if (!digits) return false;
+    if (digits.startsWith('55')) {
+      return digits.length > 2;
+    }
+    return digits.length > 0;
   }
 
   function recipientHasValue(recipient, key) {
@@ -829,7 +843,7 @@ export function useEventsForm(props, emit) {
       return Boolean(recipient.email && recipient.email.trim());
     }
     if (['phone', 'telefone', 'celular', 'whatsapp'].includes(normalized)) {
-      return Boolean(recipient.phone && recipient.phone.trim());
+      return hasPhoneDigits(recipient.phone);
     }
     const value = recipient.vars?.[normalized];
     return value !== undefined && String(value).trim() !== '';
@@ -911,7 +925,7 @@ export function useEventsForm(props, emit) {
       if (!everyHasEmail) return false;
     } else {
       const everyHasPhone = form.recipients.every(recipient =>
-        Boolean(recipient.phone)
+        hasPhoneDigits(recipient.phone)
       );
       if (!everyHasPhone) return false;
       if (!form.agent) return false;
@@ -925,15 +939,17 @@ export function useEventsForm(props, emit) {
     if (!form.timezone) return false;
     if (!placeholdersSatisfied()) return false;
 
-    if (form.channel === 'whatsapp' && showFirstContactTemplate.value) {
-      // Require selecting a first-contact template when the toggle is enabled
-      if (!selectedTemplate.value) return false;
-
-      const allDaysHaveMessage = form.daysOfWeek.every(day => {
-        const content = form.payload?.messagesByDay?.[day] || '';
-        return Boolean(content.trim());
-      });
-      if (!allDaysHaveMessage) return false;
+    if (form.channel === 'whatsapp') {
+      if (showFirstContactTemplate.value) {
+        // Require selecting a first-contact template when the toggle is enabled
+        if (!selectedTemplate.value) return false;
+      } else {
+        const allDaysHaveMessage = form.daysOfWeek.every(day => {
+          const content = form.payload?.messagesByDay?.[day] || '';
+          return Boolean(content.trim());
+        });
+        if (!allDaysHaveMessage) return false;
+      }
     }
 
     return true;
@@ -1097,7 +1113,7 @@ export function useEventsForm(props, emit) {
     form.recipients = form.recipients.map(recipient => ({
       name: recipient.name || '',
       email: recipient.email,
-      phone: recipient.phone ? normalizePhoneValue(recipient.phone) : recipient.phone,
+      phone: normalizePhoneValue(recipient.phone || ''),
       vars: Object.fromEntries(
         Object.entries(recipient.vars || {}).map(([key, v]) => [
           normalizeVarKey(key),
@@ -1305,7 +1321,7 @@ export function useEventsForm(props, emit) {
       ...form.recipients,
       {
         name: '',
-        phone: form.channel === 'whatsapp' ? '' : undefined,
+        phone: form.channel === 'whatsapp' ? '+55' : undefined,
         email: form.channel === 'email' ? '' : undefined,
         vars,
         primeiroContato: Boolean(firstContactAll.value),
@@ -1327,32 +1343,35 @@ export function useEventsForm(props, emit) {
   function onRecipientPhoneFocus(index, event) {
     const recipient = form.recipients[index];
     if (!recipient) return;
-    if (!recipient.phone) {
+    if (!hasPhoneDigits(recipient.phone)) {
+      const defaultValue = '+55';
       if (event?.target) {
-        event.target.value = '+';
-        const len = event.target.value.length;
+        event.target.value = defaultValue;
+        const len = defaultValue.length;
         event.target.setSelectionRange?.(len, len);
       }
-      recipient.phone = '+';
+      recipient.phone = defaultValue;
       return;
     }
-    if (recipient.phone && !recipient.phone.startsWith('+')) {
-      const normalized = normalizePhoneValue(recipient.phone);
+    const normalized = normalizePhoneValue(recipient.phone);
+    if (recipient.phone !== normalized) {
       recipient.phone = normalized;
-      if (event?.target) {
-        event.target.value = normalized;
-        const len = normalized.length;
-        event.target.setSelectionRange?.(len, len);
-      }
+    }
+    if (event?.target && event.target.value !== normalized) {
+      event.target.value = normalized;
+      const len = normalized.length;
+      event.target.setSelectionRange?.(len, len);
     }
   }
 
   function onRecipientPhoneBlur(index) {
     const recipient = form.recipients[index];
     if (!recipient) return;
-    if (recipient.phone === '+') {
+    if (!hasPhoneDigits(recipient.phone)) {
       recipient.phone = '';
+      return;
     }
+    recipient.phone = normalizePhoneValue(recipient.phone);
   }
 
   function removeRecipient(index) {
@@ -1448,9 +1467,11 @@ export function useEventsForm(props, emit) {
 
         const existingKeys = new Set(
           form.recipients
-            .map(recipient =>
-              needsEmail ? recipient.email?.toLowerCase() : recipient.phone
-            )
+            .map(recipient => {
+              if (needsEmail) return recipient.email?.toLowerCase();
+              if (!hasPhoneDigits(recipient.phone)) return null;
+              return normalizePhoneValue(recipient.phone);
+            })
             .filter(Boolean)
         );
 
@@ -1498,7 +1519,11 @@ export function useEventsForm(props, emit) {
               skipped += 1;
               return;
             }
-            const normalizedPhone = phone.replace(/\s+/g, '');
+            const normalizedPhone = normalizePhoneValue(phone);
+            if (!hasPhoneDigits(normalizedPhone)) {
+              skipped += 1;
+              return;
+            }
             if (existingKeys.has(normalizedPhone)) {
               skipped += 1;
               return;
@@ -1580,7 +1605,9 @@ export function useEventsForm(props, emit) {
     const recipientsPayload = form.recipients.map(recipient => ({
       name: recipient.name || '',
       email: recipient.email,
-      phone: recipient.phone,
+      phone: hasPhoneDigits(recipient.phone)
+        ? normalizePhoneValue(recipient.phone)
+        : '',
       vars: recipient.vars || {},
       primeiroContato: Boolean(firstContactAll.value),
     }));

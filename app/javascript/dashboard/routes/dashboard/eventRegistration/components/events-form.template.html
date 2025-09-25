@@ -523,7 +523,7 @@
             @input="recomputeRequiredPlaceholders"
           />
           <p
-            v-if="!(form.payload.messagesByDay[day] || '').trim()"
+            v-if="!showFirstContactTemplate && !(form.payload.messagesByDay[day] || '').trim()"
             class="text-xs text-n-ruby-11"
           >
             {{
