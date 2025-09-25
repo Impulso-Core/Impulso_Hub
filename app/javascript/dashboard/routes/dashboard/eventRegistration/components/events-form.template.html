@@ -36,7 +36,7 @@
           {{ text.channel.placeholder }}
         </option>
         <option value="whatsapp">{{ text.channel.options.whatsapp }}</option>
-        <option value="email">{{ text.channel.options.email }}</option>
+        <!-- <option value="email">{{ text.channel.options.email }}</option> -->
       </select>
     </div>
   </section>
@@ -496,7 +496,7 @@
     </p>
 
     <div
-      v-if="form.channel === 'whatsapp' && form.daysOfWeek.length"
+      v-if="form.channel === 'whatsapp' && form.daysOfWeek.length && !showFirstContactTemplate"
       class="space-y-3 rounded-3xl border border-n-container bg-n-solid-2 p-4"
     >
       <h3 class="text-sm font-semibold text-n-slate-12">

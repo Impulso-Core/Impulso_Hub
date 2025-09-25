@@ -1230,12 +1230,13 @@ export function useEventsForm(props, emit) {
             const name = item.name || '';
             const phoneLabel = item.label || item.number || '';
             const display =
-              name && phoneLabel ? `${name} - ${phoneLabel}` : name || phoneLabel;
+              name && phoneLabel ? `${name} (${phoneLabel})` : name || phoneLabel;
             return {
               id: item.id,
               name,
               label: display,
               number: item.number,
+              numberReadable: phoneLabel,
             };
           })
         : [];
