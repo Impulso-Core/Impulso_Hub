@@ -32,10 +32,8 @@ const {
   templateFallback,
 
   // computed
-  startDate,
-  endDate,
-  startDateMin,
-  endDateMin,
+  startDateInput,
+  endDateInput,
   isStartDateInPast,
   availableTimeOptions,
   isTimeSelectionEnabled,
@@ -64,6 +62,9 @@ const {
   syncTemplates,
   applyTemplate,
   addRecipient,
+  onRecipientPhoneInput,
+  onRecipientPhoneFocus,
+  onRecipientPhoneBlur,
   removeRecipient,
   detectDelimiter,
   parseCsvText,

@@ -41,7 +41,7 @@ export function useEventsForm(props, emit) {
     }
     return options;
   }
-  const TIME_OPTIONS = Object.freeze(generateTimeOptions(15));
+  const TIME_OPTIONS = Object.freeze(generateTimeOptions(5));
   const WEEKDAYS = Object.freeze(['MON', 'TUE', 'WED', 'THU', 'FRI']);
   const BRT_TIMEZONE = 'America/Sao_Paulo';
   const MIN_FUTURE_MINUTES = 3; // minimal buffer before upcoming slot becomes unavailable
@@ -182,6 +182,19 @@ export function useEventsForm(props, emit) {
     } catch (_e) {
       return isoString.substring(0, 10);
     }
+  }
+  function isoToDMYInTimezone(isoString, timeZone) {
+    const ymd = isoDateInTimezone(isoString, timeZone);
+    if (!ymd) return '';
+    const [year, month, day] = ymd.split('-');
+    if (!year || !month || !day) return '';
+    return `${day}/${month}/${year}`;
+  }
+  function dmyToYmd(dmy) {
+    const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(dmy || '');
+    if (!match) return '';
+    const [, dd, mm, yyyy] = match;
+    return `${yyyy}-${mm}-${dd}`;
   }
   function minutesFromHM(value) {
     const match = /^(\d{2}):(\d{2})$/.exec(value || '');
@@ -399,47 +412,19 @@ export function useEventsForm(props, emit) {
   const canSelectChannel = computed(() => isNameValid.value);
   const canSelectAgent = computed(() => canSelectChannel.value && !!form.channel);
 
-  const startDate = computed({
-    get: () => isoDateInTimezone(form.startAt, form.timezone || BRT_TIMEZONE),
-    set: value => {
-      if (!value) {
-        form.startAt = '';
-        return;
-      }
-      const min = startDateMin.value;
-      const normalized = value < min ? min : value;
-      form.startAt = toUtcIsoFromDate(
-        normalized,
-        '00:00:00',
-        form.timezone || BRT_TIMEZONE
-      );
-      if (endDate.value && endDate.value < normalized) {
-        endDate.value = normalized;
-      }
-    },
-  });
-
-  const endDate = computed({
-    get: () => isoDateInTimezone(form.endAt, form.timezone || BRT_TIMEZONE),
-    set: value => {
-      if (!value) {
-        form.endAt = '';
-        return;
-      }
-      const min = endDateMin.value;
-      const normalized = value < min ? min : value;
-      form.endAt = toUtcIsoFromDate(
-        normalized,
-        '23:59:59',
-        form.timezone || BRT_TIMEZONE
-      );
-    },
-  });
+  const startDateInput = ref('');
+  const endDateInput = ref('');
 
   const startDateMin = computed(() => nowState.value.date);
-  const endDateMin = computed(() => startDate.value || startDateMin.value);
-  const startDateValue = computed(() => startDate.value);
-  const endDateValue = computed(() => endDate.value);
+  const startDateValue = computed(() => {
+    if (!form.startAt) return '';
+    return isoDateInTimezone(form.startAt, form.timezone || BRT_TIMEZONE);
+  });
+  const endDateValue = computed(() => {
+    if (!form.endAt) return '';
+    return isoDateInTimezone(form.endAt, form.timezone || BRT_TIMEZONE);
+  });
+  const endDateMin = computed(() => startDateValue.value || startDateMin.value);
   const isStartDateInPast = computed(() => {
     if (!startDateValue.value) return false;
     return startDateValue.value < nowState.value.date;
@@ -469,17 +454,143 @@ export function useEventsForm(props, emit) {
     }
   }
 
-  watch(startDateMin, min => {
-    if (startDate.value && startDate.value < min) {
-      startDate.value = min;
+  watch(
+    () => form.startAt,
+    iso => {
+      const display = isoToDMYInTimezone(iso, form.timezone || BRT_TIMEZONE);
+      if (startDateInput.value !== display) {
+        startDateInput.value = display;
+      }
+    },
+    { immediate: true }
+  );
+
+  watch(
+    () => form.endAt,
+    iso => {
+      const display = isoToDMYInTimezone(iso, form.timezone || BRT_TIMEZONE);
+      if (endDateInput.value !== display) {
+        endDateInput.value = display;
+      }
+    },
+    { immediate: true }
+  );
+
+  watch(startDateInput, value => {
+    const masked = maskDateDDMMYYYY(value);
+    if (value !== masked) {
+      startDateInput.value = masked;
+      return;
+    }
+    if (!masked) {
+      form.startAt = '';
+      return;
+    }
+    if (!isValidDateDMY(masked)) return;
+    const ymd = dmyToYmd(masked);
+    if (!ymd) return;
+    let normalized = ymd;
+    const minYmd = startDateMin.value;
+    if (normalized < minYmd) {
+      normalized = minYmd;
+      const adjustedIso = toUtcIsoFromDate(
+        normalized,
+        '00:00:00',
+        form.timezone || BRT_TIMEZONE
+      );
+      const adjustedDisplay = isoToDMYInTimezone(
+        adjustedIso,
+        form.timezone || BRT_TIMEZONE
+      );
+      if (startDateInput.value !== adjustedDisplay) {
+        startDateInput.value = adjustedDisplay;
+        return;
+      }
+    }
+    const iso = toUtcIsoFromDate(
+      normalized,
+      '00:00:00',
+      form.timezone || BRT_TIMEZONE
+    );
+    if (form.startAt !== iso) {
+      form.startAt = iso;
+    }
+    const currentEndYmd = endDateValue.value;
+    if (currentEndYmd && currentEndYmd < normalized) {
+      const alignedEndIso = toUtcIsoFromDate(
+        normalized,
+        '23:59:59',
+        form.timezone || BRT_TIMEZONE
+      );
+      if (form.endAt !== alignedEndIso) {
+        form.endAt = alignedEndIso;
+      }
+      const alignedDisplay = isoToDMYInTimezone(
+        alignedEndIso,
+        form.timezone || BRT_TIMEZONE
+      );
+      if (endDateInput.value !== alignedDisplay) {
+        endDateInput.value = alignedDisplay;
+      }
     }
   });
 
-  watch(endDateMin, min => {
-    if (endDate.value && endDate.value < min) {
-      endDate.value = min;
+  watch(endDateInput, value => {
+    const masked = maskDateDDMMYYYY(value);
+    if (value !== masked) {
+      endDateInput.value = masked;
+      return;
+    }
+    if (!masked) {
+      form.endAt = '';
+      return;
+    }
+    if (!isValidDateDMY(masked)) return;
+    const ymd = dmyToYmd(masked);
+    if (!ymd) return;
+    let normalized = ymd;
+    const minYmd = endDateMin.value;
+    if (normalized < minYmd) {
+      normalized = minYmd;
+      const adjustedIso = toUtcIsoFromDate(
+        normalized,
+        '23:59:59',
+        form.timezone || BRT_TIMEZONE
+      );
+      const adjustedDisplay = isoToDMYInTimezone(
+        adjustedIso,
+        form.timezone || BRT_TIMEZONE
+      );
+      if (endDateInput.value !== adjustedDisplay) {
+        endDateInput.value = adjustedDisplay;
+        return;
+      }
+    }
+    const iso = toUtcIsoFromDate(
+      normalized,
+      '23:59:59',
+      form.timezone || BRT_TIMEZONE
+    );
+    if (form.endAt !== iso) {
+      form.endAt = iso;
     }
   });
+
+  watch(
+    () => form.timezone,
+    () => {
+      const tz = form.timezone || BRT_TIMEZONE;
+      const startDisplay = isoToDMYInTimezone(form.startAt, tz);
+      if (startDateInput.value !== startDisplay) {
+        startDateInput.value = startDisplay;
+      }
+      const endDisplay = isoToDMYInTimezone(form.endAt, tz);
+      if (endDateInput.value !== endDisplay) {
+        endDateInput.value = endDisplay;
+      }
+      ensureValidTimeSelection();
+    }
+  );
 
   const selectedTemplate = computed(
     () =>
@@ -1194,6 +1305,37 @@ export function useEventsForm(props, emit) {
     form.recipients[index].phone = masked;
   }
 
+  function onRecipientPhoneFocus(index, event) {
+    const recipient = form.recipients[index];
+    if (!recipient) return;
+    if (!recipient.phone) {
+      if (event?.target) {
+        event.target.value = '+';
+        const len = event.target.value.length;
+        event.target.setSelectionRange?.(len, len);
+      }
+      recipient.phone = '+';
+      return;
+    }
+    if (recipient.phone && !recipient.phone.startsWith('+')) {
+      const normalized = normalizePhoneValue(recipient.phone);
+      recipient.phone = normalized;
+      if (event?.target) {
+        event.target.value = normalized;
+        const len = normalized.length;
+        event.target.setSelectionRange?.(len, len);
+      }
+    }
+  }
+
+  function onRecipientPhoneBlur(index) {
+    const recipient = form.recipients[index];
+    if (!recipient) return;
+    if (recipient.phone === '+') {
+      recipient.phone = '';
+    }
+  }
+
   function removeRecipient(index) {
     form.recipients = form.recipients.filter(
       (_, recipientIndex) => recipientIndex !== index
@@ -1704,8 +1846,8 @@ export function useEventsForm(props, emit) {
     templateFallback,
 
     // computed
-    startDate,
-    endDate,
+    startDateInput,
+    endDateInput,
     startDateMin,
     endDateMin,
     isStartDateInPast,
@@ -1720,7 +1862,6 @@ export function useEventsForm(props, emit) {
     canSelectChannel,
     canSelectAgent,
     validDateRange,
-    // validation flags for masked inputs
     selectedTemplate,
     showFirstContactTemplate,
     variableEntries,
@@ -1738,6 +1879,8 @@ export function useEventsForm(props, emit) {
     applyTemplate,
     addRecipient,
     onRecipientPhoneInput,
+    onRecipientPhoneFocus,
+    onRecipientPhoneBlur,
     removeRecipient,
     detectDelimiter,
     parseCsvText,
