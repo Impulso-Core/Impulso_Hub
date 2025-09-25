@@ -47,6 +47,7 @@ export function useEventsForm(props, emit) {
   const MIN_FUTURE_MINUTES = 3; // minimal buffer before upcoming slot becomes unavailable
   const NAME_ALLOWED_REGEX = /^[A-Za-z0-9_-]+$/;
   const PHONE_MAX_DIGITS = 13;
+  const RESERVED_TEMPLATE_VARIABLES = new Set(['name']);
 
   // Input mask helpers and validators
   function onlyDigits(s) {
@@ -681,6 +682,7 @@ export function useEventsForm(props, emit) {
   const variableEntries = computed(() => {
     const entries = [];
     knownVariables.value.forEach((info, key) => {
+      if (RESERVED_TEMPLATE_VARIABLES.has(key)) return;
       entries.push({ key, label: info.raw || key });
     });
     return entries;
@@ -689,6 +691,7 @@ export function useEventsForm(props, emit) {
   const variableLabelMap = computed(() => {
     const map = {};
     knownVariables.value.forEach((info, key) => {
+      if (RESERVED_TEMPLATE_VARIABLES.has(key)) return;
       map[key] = info.raw || key;
     });
     return map;
@@ -1019,6 +1022,7 @@ export function useEventsForm(props, emit) {
 
     const nextMap = new Map();
     orderedKeys.forEach(key => {
+      if (RESERVED_TEMPLATE_VARIABLES.has(key)) return;
       const info = details.get(key) || {};
       nextMap.set(key, {
         key,
@@ -1027,17 +1031,18 @@ export function useEventsForm(props, emit) {
     });
 
     knownVariables.value = nextMap;
-    form.customFields = orderedKeys;
+    form.customFields = orderedKeys.filter(key => !RESERVED_TEMPLATE_VARIABLES.has(key));
 
     form.recipients = form.recipients.map(recipient => {
       const vars = { ...(recipient.vars || {}) };
       orderedKeys.forEach(key => {
+        if (RESERVED_TEMPLATE_VARIABLES.has(key)) return;
         if (!Object.prototype.hasOwnProperty.call(vars, key)) {
           vars[key] = '';
         }
       });
       Object.keys(vars).forEach(existingKey => {
-        if (!details.has(existingKey)) {
+        if (!details.has(existingKey) || RESERVED_TEMPLATE_VARIABLES.has(existingKey)) {
           delete vars[existingKey];
         }
       });
@@ -1115,10 +1120,9 @@ export function useEventsForm(props, emit) {
       email: recipient.email,
       phone: normalizePhoneValue(recipient.phone || ''),
       vars: Object.fromEntries(
-        Object.entries(recipient.vars || {}).map(([key, v]) => [
-          normalizeVarKey(key),
-          v,
-        ])
+        Object.entries(recipient.vars || {})
+          .map(([key, v]) => [normalizeVarKey(key), v])
+          .filter(([key]) => key && !RESERVED_TEMPLATE_VARIABLES.has(key))
       ),
       primeiroContato: Boolean(recipient.primeiroContato),
     }));
@@ -1131,7 +1135,9 @@ export function useEventsForm(props, emit) {
         );
       }
     });
-    form.customFields = Array.from(collected);
+    form.customFields = Array.from(collected).filter(
+      key => !RESERVED_TEMPLATE_VARIABLES.has(key)
+    );
 
     // Derive global first contact from existing recipients (legacy per-recipient data)
     firstContactAll.value = form.recipients.some(r => Boolean(r.primeiroContato));
@@ -1559,8 +1565,8 @@ export function useEventsForm(props, emit) {
 
   function downloadCsvTemplate() {
     const needsEmail = form.channel === 'email';
-    const headers = needsEmail ? ['name', 'email'] : ['name', 'phone'];
-    const rows = needsEmail
+    const baseHeaders = needsEmail ? ['name', 'email'] : ['name', 'phone'];
+    const baseRows = needsEmail
       ? [
           ['Ana', 'ana@exemplo.com'],
           ['Bruno', 'bruno@exemplo.com'],
@@ -1569,6 +1575,71 @@ export function useEventsForm(props, emit) {
           ['Ana', '+5532987654321'],
           ['Bruno', '+5531999999999'],
         ];
+
+    const includeTemplateVars =
+      form.channel === 'whatsapp' &&
+      showFirstContactTemplate.value &&
+      (selectedTemplate.value || templateFallback.value);
+
+    const templateHeaders = [];
+    if (includeTemplateVars) {
+      const skipKeys = new Set(baseHeaders.map(header => normalizeVarKey(header)));
+      const seen = new Set();
+      const resolveLabel = normalizedKey => {
+        const store = knownVariables.value;
+        if (store && typeof store.get === 'function') {
+          const info = store.get(normalizedKey);
+          if (info?.raw) return info.raw;
+        }
+        return normalizedKey;
+      };
+      const addHeader = (normalized, raw) => {
+        if (!normalized) return;
+        const normalizedKey = normalizeVarKey(normalized);
+        if (!normalizedKey) return;
+        if (
+          RESERVED_TEMPLATE_VARIABLES.has(normalizedKey) ||
+          skipKeys.has(normalizedKey) ||
+          seen.has(normalizedKey)
+        )
+          return;
+        seen.add(normalizedKey);
+        const label = raw || resolveLabel(normalizedKey);
+        templateHeaders.push({ key: normalizedKey, label });
+      };
+
+      const template = selectedTemplate.value;
+      if (template?.placeholderEntries) {
+        Object.values(template.placeholderEntries).forEach(entries => {
+          entries.forEach(({ raw, normalized }) => addHeader(normalized, raw));
+        });
+      }
+
+      if (!template && templateFallback.value?.params) {
+        Object.values(templateFallback.value.params).forEach(mapping => {
+          Object.values(mapping || {}).forEach(value => {
+            const match = /{{\s*vars\.([a-zA-Z0-9_.-]+)\s*}}/i.exec(value || '');
+            if (match) addHeader(match[1]);
+          });
+        });
+      }
+    }
+
+    const headers = [...baseHeaders, ...templateHeaders.map(item => item.label)];
+    const rows = baseRows.map((row, rowIndex) => {
+      if (!templateHeaders.length) return row;
+      const extras = templateHeaders.map((item, extraIndex) => {
+        const base = (item.label || item.key || `var${extraIndex + 1}`)
+          .toString()
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '_')
+          .replace(/^_+|_+$/g, '');
+        const suffix = base || `var${extraIndex + 1}`;
+        return `valor_${suffix}_${rowIndex + 1}`;
+      });
+      return [...row, ...extras];
+    });
+
     const csv = [
       headers.join(','),
       ...rows.map(row =>
@@ -1602,15 +1673,24 @@ export function useEventsForm(props, emit) {
   }
 
   function buildPayload() {
-    const recipientsPayload = form.recipients.map(recipient => ({
-      name: recipient.name || '',
-      email: recipient.email,
-      phone: hasPhoneDigits(recipient.phone)
-        ? normalizePhoneValue(recipient.phone)
-        : '',
-      vars: recipient.vars || {},
-      primeiroContato: Boolean(firstContactAll.value),
-    }));
+    const injectReservedNameVar = requiredPlaceholders.value.has('name');
+
+    const recipientsPayload = form.recipients.map(recipient => {
+      const baseVars = { ...(recipient.vars || {}) };
+      if (injectReservedNameVar) {
+        baseVars.name = recipient.name || '';
+      }
+
+      return {
+        name: recipient.name || '',
+        email: recipient.email,
+        phone: hasPhoneDigits(recipient.phone)
+          ? normalizePhoneValue(recipient.phone)
+          : '',
+        vars: baseVars,
+        primeiroContato: Boolean(firstContactAll.value),
+      };
+    });
 
     const templateFallbackPayload =
       form.channel === 'whatsapp' && showFirstContactTemplate.value && templateFallback.value
