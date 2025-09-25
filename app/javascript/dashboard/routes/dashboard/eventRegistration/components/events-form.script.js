@@ -1,8 +1,15 @@
 /* eslint-disable */
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue';
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  reactive,
+  ref,
+  watch,
+} from 'vue';
 import axios from 'axios';
 import { useAlert } from 'dashboard/composables';
-import { de } from 'date-fns/locale';
 
 export function useEventsForm(props, emit) {
   const API_BASE =
@@ -36,6 +43,10 @@ export function useEventsForm(props, emit) {
   }
   const TIME_OPTIONS = Object.freeze(generateTimeOptions(15));
   const WEEKDAYS = Object.freeze(['MON', 'TUE', 'WED', 'THU', 'FRI']);
+  const BRT_TIMEZONE = 'America/Sao_Paulo';
+  const MIN_FUTURE_MINUTES = 3; // minimal buffer before upcoming slot becomes unavailable
+  const NAME_ALLOWED_REGEX = /^[A-Za-z0-9_-]+$/;
+  const PHONE_MAX_DIGITS = 15;
 
   // Input mask helpers and validators
   function onlyDigits(s) {
@@ -116,118 +127,102 @@ export function useEventsForm(props, emit) {
     if (outM2) res += outM2;
     return res;
   }
-  function toISOFromDMYAndHM(dmy, hm) {
-    const dm = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(dmy);
-    const tm = /^(\d{2}):(\d{2})$/.exec(hm);
-    if (!dm || !tm) return '';
-    const dd = Number(dm[1]);
-    const mm = Number(dm[2]);
-    const yyyy = Number(dm[3]);
-    const hh = Number(tm[1]);
-    const min = Number(tm[2]);
-    const iso = new Date(Date.UTC(yyyy, mm - 1, dd, hh, min, 0, 0)).toISOString();
-    return iso.replace('.000Z', 'Z');
+
+  function getTimeZoneParts(date, timeZone) {
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+      }).formatToParts(date);
+      const result = {};
+      parts.forEach(part => {
+        if (part.type !== 'literal') result[part.type] = part.value;
+      });
+      return result;
+    } catch (_e) {
+      return null;
+    }
   }
-  function isoToDMY(iso) {
-    const dt = new Date(iso);
-    if (Number.isNaN(dt.getTime())) return '';
-    return `${pad(dt.getUTCDate())}/${pad(dt.getUTCMonth() + 1)}/${dt.getUTCFullYear()}`;
+  function toUtcIsoFromDate(dateString, timeString, timeZone) {
+    if (!dateString) return '';
+    const [year, month, day] = dateString.split('-').map(Number);
+    if (!year || !month || !day) return '';
+    const [hour = 0, minute = 0, second = 0] = (timeString || '00:00:00')
+      .split(':')
+      .map(Number);
+    const base = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+    const parts = getTimeZoneParts(base, timeZone);
+    if (!parts) return base.toISOString();
+    const asUTC = Date.UTC(
+      Number(parts.year),
+      Number(parts.month) - 1,
+      Number(parts.day),
+      Number(parts.hour),
+      Number(parts.minute),
+      Number(parts.second)
+    );
+    const offsetMs = asUTC - base.getTime();
+    const target = new Date(base.getTime() - offsetMs);
+    return target.toISOString();
   }
-  function isoToHM(iso) {
-    const dt = new Date(iso);
-    if (Number.isNaN(dt.getTime())) return '';
-    return `${pad(dt.getUTCHours())}:${pad(dt.getUTCMinutes())}`;
+  function isoDateInTimezone(isoString, timeZone) {
+    if (!isoString) return '';
+    const date = new Date(isoString);
+    if (Number.isNaN(date.getTime())) return '';
+    try {
+      const parts = getTimeZoneParts(date, timeZone);
+      if (!parts) return isoString.substring(0, 10);
+      return `${parts.year}-${parts.month}-${parts.day}`;
+    } catch (_e) {
+      return isoString.substring(0, 10);
+    }
   }
-
-  // Validation state derived from inputs
-  const isValidRunAtDate = computed(() => isValidDateDMY(runAtDate.value));
-  const isValidRunAtTime = computed(() => isValidTimeHHMM(runAtTime.value));
-  const isValidRecurringTime = computed(() => isValidTimeHHMM(timeInput.value));
-
-  // Input handlers (mask as user types)
-  function onRunAtDateInput(e) {
-    const masked = maskDateDDMMYYYY(e.target.value);
-    if (e && e.target) e.target.value = masked;
-    runAtDate.value = masked;
+  function minutesFromHM(value) {
+    const match = /^(\d{2}):(\d{2})$/.exec(value || '');
+    if (!match) return null;
+    return Number(match[1]) * 60 + Number(match[2]);
   }
-  function onRunAtTimeInput(e) {
-    const masked = maskTimeHHMMStrict(e.target.value);
-    if (e && e.target) e.target.value = masked;
-    runAtTime.value = masked;
+  function getNowInTimezone(timeZone) {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    });
+    const parts = formatter.formatToParts(new Date());
+    const lookup = parts.reduce((acc, part) => {
+      acc[part.type] = part.value;
+      return acc;
+    }, {});
+    const date = `${lookup.year}-${lookup.month}-${lookup.day}`;
+    const hour = Number(lookup.hour || '0');
+    const minute = Number(lookup.minute || '0');
+    return {
+      date,
+      minutes: hour * 60 + minute,
+      seconds: Number(lookup.second || '0'),
+    };
   }
-  function onRecurringTimeInput(e) {
-    const masked = maskTimeHHMMStrict(e.target.value);
-    if (e && e.target) e.target.value = masked;
-    timeInput.value = masked;
-  }
-
-  // Prevent typing invalid hours/minutes (blocks > 23:59 at the keystroke)
-  function onStrictTimeKeydown(e) {
-    const key = e.key;
-
-    // Allow control/navigation keys and shortcuts
-    if (
-      key === 'Backspace' ||
-      key === 'Delete' ||
-      key === 'Tab' ||
-      key === 'ArrowLeft' ||
-      key === 'ArrowRight' ||
-      key === 'Home' ||
-      key === 'End'
-    ) {
-      return;
-    }
-    if (e.ctrlKey || e.metaKey) {
-      return; // allow copy/paste/select-all shortcuts
-    }
-
-    // Only digits are allowed to be typed
-    if (!/^\d$/.test(key)) {
-      e.preventDefault();
-      return;
-    }
-
-    // Determine how many digits are currently present (ignoring colon)
-    const input = e.target;
-    const currentDigits = onlyDigits(input.value);
-    const selectionLength =
-      input.selectionStart != null && input.selectionEnd != null
-        ? Math.max(0, input.selectionEnd - input.selectionStart)
-        : 0;
-
-    // Effective digits that will remain before adding this key
-    const effectiveLen = Math.max(0, currentDigits.length - selectionLength);
-
-    // Enforce per-position constraints
-    if (effectiveLen === 0) {
-      // First hour digit: 0-2
-      if (key > '2') e.preventDefault();
-      return;
-    }
-    if (effectiveLen === 1) {
-      // Second hour digit: if first is 2 then 0-3 else 0-9
-      const h1 = currentDigits[0];
-      if (h1 === '2' && key > '3') e.preventDefault();
-      return;
-    }
-    if (effectiveLen === 2) {
-      // First minute digit: 0-5
-      if (key > '5') e.preventDefault();
-      return;
-    }
-    if (effectiveLen === 3) {
-      // Second minute digit: 0-9 (all digits ok)
-      return;
-    }
-
-    // Already have 4 digits, block extra numeric input
-    e.preventDefault();
+  function sanitizeScheduleName(raw) {
+    return (raw || '').replace(/[^A-Za-z0-9_-]/g, '');
   }
 
   const text = Object.freeze({
     name: {
       label: 'Nome do agendamento', 
       placeholder: 'Insira o nome do agendamento aqui',
+      required: 'Campo obrigatório',
+      invalid: 'Use apenas letras, números, hífen (-) ou underline (_).',
     },
     channel: {
       label: 'Canal',
@@ -258,7 +253,7 @@ export function useEventsForm(props, emit) {
         'Adicione manualmente, importe um CSV ou defina variáveis personalizadas.',
       import: 'Importar CSV',
       download: 'Modelo CSV',
-      add: 'Adicionar',
+      add: 'Adicionar destinatário',
       empty: 'Adicione manualmente ou importe via CSV para iniciar o envio.',
       remove: 'Remover',
       firstContact: 'Primeiro contato (Template)',
@@ -289,7 +284,6 @@ export function useEventsForm(props, emit) {
       textPlaceholder: 'Olá {{name}}!',
       html: 'HTML (opcional)',
       htmlPlaceholder: '<p>Olá {{name}}!</p>',
-      message: 'Mensagem padrão',
       templateLabel: 'Templates',
       templateSelect: {
         loading: 'Carregando templates...',
@@ -311,26 +305,27 @@ export function useEventsForm(props, emit) {
     schedule: {
       title: 'Recorrência',
       description:
-        'Configure uma execução única ou defina os dias/horários recorrentes.',
-      runOnce: 'Agendar apenas uma vez (runAt)',
-      runAt: 'Executar em (ISO UTC)',
-      runAtPlaceholder: '2025-09-05T15:00:00Z',
+        'Defina os dias, datas e horários válidos para o agendamento.',
       timezone: 'Timezone',
       timezoneStatic: '— não aplicável —',
       days: 'Dias da semana',
       time: 'Horário (HH:mm)',
-      timePlaceholder: '08:00',
+      timePlaceholder: 'Selecionar horário',
       timezonePlaceholder: 'America/Sao_Paulo',
       dayMessagesTitle: 'Mensagens por dia selecionado',
       messageLabel: day => `Mensagem para ${day}`,
       missingMessage: day => `Obrigatório para ${day}.`,
+      timeRequiresDate: 'Defina uma data inicial para habilitar os horários.',
+      timeRequired: 'Selecione um horário válido.',
+      timeTooSoon: 'Escolha um horário com pelo menos alguns minutos de antecedência.',
+      timeUnavailable: 'Nenhum horário futuro disponível para hoje. Escolha outra data.',
     },
     timeframe: {
       start: 'Dt. de Início:',
       startPlaceholder: '2025-09-01T00:00:00Z',
       end: 'Dt. de Fim:',
       endPlaceholder: '2025-12-31T23:59:59Z',
-      error: 'A data de fim deve ser posterior à data de início.',
+      error: 'Escolha datas futuras e garanta que a data final seja posterior à inicial.',
     },
     toggle: 'Agendamento habilitado',
     actions: {
@@ -371,15 +366,13 @@ export function useEventsForm(props, emit) {
     payload: { message: 'Olá {{name}}!', messagesByDay: {} },
     customFields: [],
     enabled: true,
-    daysOfWeek: ['MON'],
-    time: '08:00',
-    timezone: 'America/Sao_Paulo',
-    runAt: '',
+    daysOfWeek: [],
+    time: '',
+    timezone: BRT_TIMEZONE,
     startAt: '',
     endAt: '',
   });
 
-  const oneShot = ref(false);
   const dailyWeekdays = ref(false);
   const submitting = ref(false);
   const status = reactive({ show: false, ok: true, msg: '' });
@@ -390,47 +383,103 @@ export function useEventsForm(props, emit) {
   const placeholderDaysError = ref('');
   const templateFallback = ref(null);
   const firstContactAll = ref(false);
-  // Masked inputs for one-shot runAt and recurring time
-  const runAtDate = ref('');
-  const runAtTime = ref('');
-  const timeInput = ref('');
+  const nowState = ref(getNowInTimezone(BRT_TIMEZONE));
 
   const isEdit = computed(() => Boolean(originalName.value));
 
-  const isNameFilled = computed(() => !!form.name.trim());
-  const canSelectChannel = computed(() => isNameFilled.value);
+  const isNameFilled = computed(() => !!form.name);
+  const isNameValid = computed(
+    () => isNameFilled.value && NAME_ALLOWED_REGEX.test(form.name)
+  );
+  const nameError = computed(() => {
+    if (!isNameFilled.value) return text.name.required;
+    if (!isNameValid.value) return text.name.invalid;
+    return '';
+  });
+  const canSelectChannel = computed(() => isNameValid.value);
   const canSelectAgent = computed(() => canSelectChannel.value && !!form.channel);
 
-  const validDateRange = computed(() => {
-    const start = form.startAt?.trim();
-    const end = form.endAt?.trim();
-    if (!start || !end) return true;
-    const startDate = new Date(start);
-    const endDate = new Date(end);
-    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime()))
-      return true;
-    return endDate > startDate;
-  });
-
   const startDate = computed({
-    get: () => (form.startAt ? form.startAt.substring(0, 10) : ''),
-    set: v => {
-      form.startAt = v ? `${v}T00:00:00Z` : '';
+    get: () => isoDateInTimezone(form.startAt, form.timezone || BRT_TIMEZONE),
+    set: value => {
+      if (!value) {
+        form.startAt = '';
+        return;
+      }
+      const min = startDateMin.value;
+      const normalized = value < min ? min : value;
+      form.startAt = toUtcIsoFromDate(
+        normalized,
+        '00:00:00',
+        form.timezone || BRT_TIMEZONE
+      );
+      if (endDate.value && endDate.value < normalized) {
+        endDate.value = normalized;
+      }
     },
   });
 
   const endDate = computed({
-    get: () => (form.endAt ? form.endAt.substring(0, 10) : ''),
-    set: v => {
-      form.endAt = v ? `${v}T23:59:59Z` : '';
+    get: () => isoDateInTimezone(form.endAt, form.timezone || BRT_TIMEZONE),
+    set: value => {
+      if (!value) {
+        form.endAt = '';
+        return;
+      }
+      const min = endDateMin.value;
+      const normalized = value < min ? min : value;
+      form.endAt = toUtcIsoFromDate(
+        normalized,
+        '23:59:59',
+        form.timezone || BRT_TIMEZONE
+      );
     },
   });
 
+  const startDateMin = computed(() => nowState.value.date);
+  const endDateMin = computed(() => startDate.value || startDateMin.value);
+  const startDateValue = computed(() => startDate.value);
+  const endDateValue = computed(() => endDate.value);
+  const isStartDateInPast = computed(() => {
+    if (!startDateValue.value) return false;
+    return startDateValue.value < nowState.value.date;
+  });
+
+  const validDateRange = computed(() => {
+    if (isStartDateInPast.value) return false;
+    if (!startDateValue.value || !endDateValue.value) return true;
+    return endDateValue.value >= startDateValue.value;
+  });
+
   function initDefaultDates() {
-    const today = new Date().toISOString().slice(0, 10);
-    if (!form.startAt) form.startAt = `${today}T00:00:00Z`;
-    if (!form.endAt) form.endAt = `${today}T23:59:59Z`;
+    const today = nowState.value.date;
+    if (!form.startAt) {
+      form.startAt = toUtcIsoFromDate(
+        today,
+        '00:00:00',
+        form.timezone || BRT_TIMEZONE
+      );
+    }
+    if (!form.endAt) {
+      form.endAt = toUtcIsoFromDate(
+        today,
+        '23:59:59',
+        form.timezone || BRT_TIMEZONE
+      );
+    }
   }
+
+  watch(startDateMin, min => {
+    if (startDate.value && startDate.value < min) {
+      startDate.value = min;
+    }
+  });
+
+  watch(endDateMin, min => {
+    if (endDate.value && endDate.value < min) {
+      endDate.value = min;
+    }
+  });
 
   const selectedTemplate = computed(
     () =>
@@ -442,6 +491,62 @@ export function useEventsForm(props, emit) {
   const showFirstContactTemplate = computed(() =>
     Boolean(firstContactAll.value)
   );
+
+  const availableTimeOptions = computed(() => {
+    if (!startDateValue.value) return [];
+    const today = startDateValue.value === nowState.value.date;
+    const minMinutes = today
+      ? nowState.value.minutes + MIN_FUTURE_MINUTES
+      : 0;
+    return TIME_OPTIONS.filter(option => {
+      const value = minutesFromHM(option);
+      return value != null && value >= minMinutes;
+    });
+  });
+  const hasAvailableTimes = computed(
+    () => availableTimeOptions.value.length > 0
+  );
+  const isTimeSelectionEnabled = computed(
+    () => Boolean(startDateValue.value) && hasAvailableTimes.value
+  );
+  const isTimeValid = computed(() => {
+    if (!startDateValue.value) return false;
+    if (!form.time) return false;
+    const minutes = minutesFromHM(form.time);
+    if (minutes == null) return false;
+    if (startDateValue.value > nowState.value.date) return true;
+    return minutes >= nowState.value.minutes + MIN_FUTURE_MINUTES;
+  });
+  const timeError = computed(() => {
+    if (!startDateValue.value) return text.schedule.timeRequiresDate;
+    if (!hasAvailableTimes.value) return text.schedule.timeUnavailable;
+    if (!form.time) return text.schedule.timeRequired;
+    if (!isTimeValid.value) return text.schedule.timeTooSoon;
+    return '';
+  });
+
+  function ensureValidTimeSelection() {
+    if (!startDateValue.value) {
+      form.time = '';
+      return;
+    }
+    const options = availableTimeOptions.value;
+    if (!options.length) {
+      form.time = '';
+      return;
+    }
+    if (!form.time || !options.includes(form.time)) {
+      form.time = options[0];
+      return;
+    }
+    const currentMinutes = minutesFromHM(form.time);
+    const minMinutes = startDateValue.value === nowState.value.date
+      ? nowState.value.minutes + MIN_FUTURE_MINUTES
+      : 0;
+    if (currentMinutes != null && currentMinutes < minMinutes) {
+      form.time = options[0];
+    }
+  }
 
   const variableEntries = computed(() => {
     const entries = [];
@@ -579,6 +684,12 @@ export function useEventsForm(props, emit) {
     return digits.length >= 10 && digits.length <= 15;
   }
 
+  function normalizePhoneValue(raw) {
+    const digits = onlyDigits(raw).slice(0, PHONE_MAX_DIGITS);
+    if (!digits) return '';
+    return `+${digits}`;
+  }
+
   function recipientHasValue(recipient, key) {
     const normalized = normalizeVarKey(key);
     if (normalized === 'name' || normalized === 'nome') {
@@ -653,15 +764,13 @@ export function useEventsForm(props, emit) {
 
     placeholderGlobalError.value = text.placeholders.global(message);
     placeholderDaysError.value =
-      !oneShot.value && form.channel === 'whatsapp'
-        ? text.placeholders.day(message)
-        : '';
+      form.channel === 'whatsapp' ? text.placeholders.day(message) : '';
 
     return false;
   }
 
   const isValid = computed(() => {
-    if (!form.name || !form.name.trim()) return false;
+    if (!isNameValid.value) return false;
     if (!form.channel) return false;
     if (!form.recipients.length) return false;
 
@@ -678,29 +787,23 @@ export function useEventsForm(props, emit) {
       if (!form.agent) return false;
     }
 
+    if (!startDateValue.value || !endDateValue.value) return false;
     if (!validDateRange.value) return false;
+    if (!form.daysOfWeek.length) return false;
+    if (!isTimeSelectionEnabled.value) return false;
+    if (!isTimeValid.value) return false;
+    if (!form.timezone) return false;
     if (!placeholdersSatisfied()) return false;
-
-    if (oneShot.value) {
-      return Boolean(form.runAt);
-    }
-
-    const dayConfigurationValid =
-      form.daysOfWeek.length > 0 && Boolean(form.time) && Boolean(form.timezone);
-    if (!dayConfigurationValid) return false;
 
     if (form.channel === 'whatsapp' && showFirstContactTemplate.value) {
       // Require selecting a first-contact template when the toggle is enabled
       if (!selectedTemplate.value) return false;
 
-      // For recurring schedule (not one-shot), also require messages for all selected days
-      if (!oneShot.value) {
-        const allDaysHaveMessage = form.daysOfWeek.every(day => {
-          const content = form.payload?.messagesByDay?.[day] || '';
-          return Boolean(content.trim());
-        });
-        if (!allDaysHaveMessage) return false;
-      }
+      const allDaysHaveMessage = form.daysOfWeek.every(day => {
+        const content = form.payload?.messagesByDay?.[day] || '';
+        return Boolean(content.trim());
+      });
+      if (!allDaysHaveMessage) return false;
     }
 
     return true;
@@ -724,20 +827,20 @@ export function useEventsForm(props, emit) {
         placeholders.forEach((raw, normalized) => addPlaceholder(normalized, raw));
       });
     } else {
-      if (oneShot.value) {
-        const messagePlaceholders = extractPlaceholders(form.payload?.message);
+      const byDay = form.payload?.messagesByDay || {};
+      form.daysOfWeek.forEach(day => {
+        const placeholders = extractPlaceholders(byDay[day]);
+        placeholders.forEach((raw, normalized) =>
+          addPlaceholder(normalized, raw)
+        );
+      });
+
+      const fallbackMessage = form.payload?.message;
+      if (fallbackMessage) {
+        const messagePlaceholders = extractPlaceholders(fallbackMessage);
         messagePlaceholders.forEach((raw, normalized) =>
           addPlaceholder(normalized, raw)
         );
-      }
-      if (!oneShot.value) {
-        const byDay = form.payload?.messagesByDay || {};
-        form.daysOfWeek.forEach(day => {
-          const placeholders = extractPlaceholders(byDay[day]);
-          placeholders.forEach((raw, normalized) =>
-            addPlaceholder(normalized, raw)
-          );
-        });
       }
     }
 
@@ -810,20 +913,18 @@ export function useEventsForm(props, emit) {
 
   function resetForm() {
     form.name = '';
-    originalName.value = ''; 
+    originalName.value = '';
     form.channel = '';
-    form.agent = '';  
+    form.agent = '';
     form.recipients = [];
     form.payload = { message: 'Olá {{name}}!', messagesByDay: {} };
     form.customFields = [];
     form.enabled = true;
-    form.daysOfWeek = ['MON'];
-    form.time = '08:00';
-    form.timezone = 'America/Sao_Paulo';
-    form.runAt = '';
+    form.daysOfWeek = [];
+    form.time = '';
+    form.timezone = BRT_TIMEZONE;
     form.startAt = '';
     form.endAt = '';
-    oneShot.value = false;
     selectedTemplateKey.value = '';
     csvReport.value = null;
     status.show = false;
@@ -835,11 +936,9 @@ export function useEventsForm(props, emit) {
     templateFallback.value = null;
     knownVariables.value = new Map();
     firstContactAll.value = false;
-
-    // Reset masked inputs
-    runAtDate.value = '';
-    runAtTime.value = '';
-    timeInput.value = form.time || '';
+    dailyWeekdays.value = false;
+    initDefaultDates();
+    ensureValidTimeSelection();
   }
 
   function hydrateFromValue(value) {
@@ -856,8 +955,9 @@ export function useEventsForm(props, emit) {
       return;
     }
 
-    form.name = value.Name || '';
-    originalName.value = value.Name || value.name || '';  // << NOVO
+    const incomingName = value.Name || value.name || '';
+    form.name = sanitizeScheduleName(incomingName);
+    originalName.value = incomingName;
     form.channel = value.Channel || '';
     form.agent = value.Agent || '';
     form.recipients = Array.isArray(value.Recipients)
@@ -867,7 +967,7 @@ export function useEventsForm(props, emit) {
     form.recipients = form.recipients.map(recipient => ({
       name: recipient.name || '',
       email: recipient.email,
-      phone: recipient.phone,
+      phone: recipient.phone ? normalizePhoneValue(recipient.phone) : recipient.phone,
       vars: Object.fromEntries(
         Object.entries(recipient.vars || {}).map(([key, v]) => [
           normalizeVarKey(key),
@@ -904,33 +1004,22 @@ export function useEventsForm(props, emit) {
     form.enabled = Boolean(value.Enabled);
     form.startAt = value.StartAt || '';
     form.endAt = value.EndAt || '';
-
-    if (value.RunAt) {
-      oneShot.value = true;
-      form.runAt = value.RunAt;
-      // Initialize masked inputs from ISO UTC
-      runAtDate.value = isoToDMY(value.RunAt);
-      runAtTime.value = isoToHM(value.RunAt);
-      form.daysOfWeek = [];
-      form.time = '';
-      timeInput.value = '';
-      form.timezone = '';
-    } else {
-      oneShot.value = false;
-      form.runAt = '';
-      runAtDate.value = '';
-      runAtTime.value = '';
-      form.daysOfWeek = value.DaysOfWeek || ['MON'];
-      form.time = value.Time || '08:00';
-      timeInput.value = form.time || '';
-      form.timezone = value.Timezone || 'America/Sao_Paulo';
-    }
+    form.daysOfWeek = Array.isArray(value.DaysOfWeek)
+      ? value.DaysOfWeek.slice()
+      : [];
+    form.time = value.Time || '';
+    form.timezone = value.Timezone || BRT_TIMEZONE;
+    dailyWeekdays.value =
+      form.daysOfWeek.length === WEEKDAYS.length &&
+      WEEKDAYS.every(day => form.daysOfWeek.includes(day));
 
     selectedTemplateKey.value = '';
     csvReport.value = null;
     status.show = false;
     status.msg = '';
     status.ok = true;
+
+    ensureValidTimeSelection();
 
     nextTick(() => {
       recomputeRequiredPlaceholders();
@@ -1093,6 +1182,16 @@ export function useEventsForm(props, emit) {
       },
     ];
     nextTick(recomputeRequiredPlaceholders);
+  }
+
+  function onRecipientPhoneInput(index, event) {
+    const raw = event?.target?.value ?? '';
+    const masked = normalizePhoneValue(raw);
+    if (event?.target && event.target.value !== masked) {
+      event.target.value = masked;
+    }
+    if (!form.recipients[index]) return;
+    form.recipients[index].phone = masked;
   }
 
   function removeRecipient(index) {
@@ -1338,22 +1437,20 @@ export function useEventsForm(props, emit) {
         html: form.payload?.html || '',
       };
     } else {
-      if (oneShot.value) {
-        channelPayload = {
-          message: form.payload?.message || 'Olá {{name}}!',
-        };
-      } else {
-        channelPayload = {
-          messagesByDay: form.daysOfWeek.reduce((acc, day) => {
-            const value = (form.payload?.messagesByDay?.[day] || '').trim();
-            if (value) acc[day] = value;
-            return acc;
-          }, {}),
-        };
-      }
+      channelPayload = {
+        messagesByDay: form.daysOfWeek.reduce((acc, day) => {
+          const value = (form.payload?.messagesByDay?.[day] || '').trim();
+          if (value) acc[day] = value;
+          return acc;
+        }, {}),
+      };
 
       if (templateFallbackPayload) {
         channelPayload.template_fallback = templateFallbackPayload;
+      }
+      const fallbackMessage = (form.payload?.message || '').trim();
+      if (fallbackMessage) {
+        channelPayload.message = fallbackMessage;
       }
     }
 
@@ -1368,23 +1465,15 @@ export function useEventsForm(props, emit) {
       endAt: form.endAt?.trim() || undefined,
     };
 
-    if (oneShot.value) {
-      return {
-        ...base,
-        runAt: form.runAt,
-      };
-    }
-
     return {
       ...base,
       daysOfWeek: form.daysOfWeek,
       time: form.time,
-      timezone: form.timezone || 'America/Sao_Paulo',
+      timezone: form.timezone || BRT_TIMEZONE,
     };
   }
 
   async function submit() {
-    debugger;
     if (!isValid.value || submitting.value) return;
     submitting.value = true;
     status.show = false;
@@ -1417,6 +1506,16 @@ export function useEventsForm(props, emit) {
       hydrateFromValue(newValue);
     },
     { immediate: true }
+  );
+
+  watch(
+    () => form.name,
+    value => {
+      const sanitized = sanitizeScheduleName(value);
+      if (value !== sanitized) {
+        form.name = sanitized;
+      }
+    }
   );
 
   // Define WhatsApp as the default channel once the dropdown becomes enabled
@@ -1456,7 +1555,10 @@ export function useEventsForm(props, emit) {
       form.recipients = form.recipients.map(recipient => ({
         name: recipient.name || '',
         email: channel === 'email' ? recipient.email || '' : undefined,
-        phone: channel === 'whatsapp' ? recipient.phone || '' : undefined,
+        phone:
+          channel === 'whatsapp'
+            ? normalizePhoneValue(recipient.phone || '')
+            : undefined,
         vars: Object.fromEntries(
           Object.entries(recipient.vars || {}).map(([key, v]) => [
             normalizeVarKey(key),
@@ -1495,7 +1597,7 @@ export function useEventsForm(props, emit) {
   watch(
     () => form.daysOfWeek.slice(),
     days => {
-      if (form.channel !== 'whatsapp' || oneShot.value) return;
+      if (form.channel !== 'whatsapp') return;
       const messagesByDay = { ...(form.payload.messagesByDay || {}) };
       days.forEach(day => {
         if (!Object.prototype.hasOwnProperty.call(messagesByDay, day)) {
@@ -1521,33 +1623,13 @@ export function useEventsForm(props, emit) {
     }
   });
 
-  // Compose ISO runAt when both inputs are valid
-  watch([runAtDate, runAtTime], ([d, t]) => {
-    if (isValidDateDMY(d) && isValidTimeHHMM(t)) {
-      form.runAt = toISOFromDMYAndHM(d, t);
-    } else {
-      form.runAt = '';
-    }
+  watch(startDateValue, () => {
+    ensureValidTimeSelection();
   });
 
-  // Reflect timeInput into form.time only when valid (enforces HH:MM 00:00..23:59)
-  watch(timeInput, v => {
-    if (isValidTimeHHMM(v)) {
-      form.time = v;
-    } else {
-      form.time = '';
-    }
+  watch(availableTimeOptions, () => {
+    ensureValidTimeSelection();
   });
-
-  // Keep timeInput in sync when form.time changes (e.g., hydration or defaults)
-  watch(
-    () => form.time,
-    v => {
-      if (!oneShot.value) {
-        timeInput.value = v || '';
-      }
-    }
-  );
 
   watch(
     () => form.agent,
@@ -1578,46 +1660,30 @@ export function useEventsForm(props, emit) {
     }
   );
 
-  watch(
-    () => oneShot.value,
-    () => {
-      if (oneShot.value) {
-        form.daysOfWeek = [];
-        form.time = '';
-        timeInput.value = '';
-        // Keep timezone set to default; do not clear it
-      } else {
-        form.runAt = '';
-        runAtDate.value = '';
-        runAtTime.value = '';
-        if (!form.daysOfWeek.length) form.daysOfWeek = ['MON'];
-        if (!form.time) form.time = '08:00';
-        if (!form.timezone) form.timezone = 'America/Sao_Paulo';
-        timeInput.value = form.time || '';
-      }
-      nextTick(recomputeRequiredPlaceholders);
-    }
-  );
+  let nowIntervalId = null;
 
   onMounted(() => {
     loadAgents();
     if (form.channel === 'whatsapp' && form.agent) loadTemplates();
     initDefaultDates();
-    // Initialize masked inputs based on current form values
-    if (oneShot.value && form.runAt) {
-      runAtDate.value = isoToDMY(form.runAt);
-      runAtTime.value = isoToHM(form.runAt);
-    } else {
-      timeInput.value = form.time || '';
-    }
+    ensureValidTimeSelection();
     recomputeRequiredPlaceholders();
+    nowIntervalId = setInterval(() => {
+      nowState.value = getNowInTimezone(BRT_TIMEZONE);
+    }, 60000);
+  });
+
+  onBeforeUnmount(() => {
+    if (nowIntervalId) {
+      clearInterval(nowIntervalId);
+      nowIntervalId = null;
+    }
   });
 
   return {
     // constants/text
     text,
     DAYS_OF_WEEK,
-    TIME_OPTIONS,
 
     // state
     agents,
@@ -1626,13 +1692,8 @@ export function useEventsForm(props, emit) {
     templatesLoading,
     selectedTemplateKey,
     form,
-    oneShot,
     dailyWeekdays,
     firstContactAll,
-    // masked inputs
-    runAtDate,
-    runAtTime,
-    timeInput,
     submitting,
     status,
     csvReport,
@@ -1645,15 +1706,21 @@ export function useEventsForm(props, emit) {
     // computed
     startDate,
     endDate,
+    startDateMin,
+    endDateMin,
+    isStartDateInPast,
+    availableTimeOptions,
+    isTimeSelectionEnabled,
+    timeError,
+    isTimeValid,
     isEdit,
     isNameFilled,
+    isNameValid,
+    nameError,
     canSelectChannel,
     canSelectAgent,
     validDateRange,
     // validation flags for masked inputs
-    isValidRunAtDate,
-    isValidRunAtTime,
-    isValidRecurringTime,
     selectedTemplate,
     showFirstContactTemplate,
     variableEntries,
@@ -1670,17 +1737,13 @@ export function useEventsForm(props, emit) {
     syncTemplates,
     applyTemplate,
     addRecipient,
+    onRecipientPhoneInput,
     removeRecipient,
     detectDelimiter,
     parseCsvText,
     handleCsvUpload,
     downloadCsvTemplate,
     buildPayload,
-    // input handlers
-    onRunAtDateInput,
-    onRunAtTimeInput,
-    onRecurringTimeInput,
-    onStrictTimeKeydown,
     submit,
   };
 }
