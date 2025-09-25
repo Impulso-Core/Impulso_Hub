@@ -435,11 +435,10 @@
           {{ text.timeframe.start }}
         </label>
         <input
-          v-model="startDateInput"
-          type="text"
-          inputmode="numeric"
-          maxlength="10"
-          placeholder="DD/MM/AAAA"
+          v-model="startDateTimeInput"
+          type="datetime-local"
+          :min="startDateTimeMin"
+          step="300"
           class="rounded-xl bg-n-background px-4 py-3 text-sm text-n-slate-12 focus:border-n-brand focus:outline-none"
           :class="isStartDateInPast ? 'border border-n-ruby-8' : 'border border-n-weak'"
         />
@@ -449,11 +448,10 @@
           {{ text.timeframe.end }}
         </label>
         <input
-          v-model="endDateInput"
-          type="text"
-          inputmode="numeric"
-          maxlength="10"
-          placeholder="DD/MM/AAAA"
+          v-model="endDateTimeInput"
+          type="datetime-local"
+          :min="endDateTimeMin"
+          step="300"
           class="rounded-xl border border-n-weak bg-n-background px-4 py-3 text-sm text-n-slate-12 focus:border-n-brand focus:outline-none"
         />
       </div>
@@ -491,7 +489,7 @@
     </div>
 
     <p
-      v-if="startDateInput && !validDateRange"
+      v-if="startDateTimeInput && !validDateRange"
       class="rounded-xl bg-n-ruby-2 px-4 py-2 text-sm text-n-ruby-11"
     >
       {{ text.timeframe.error }}

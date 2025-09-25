@@ -183,18 +183,65 @@ export function useEventsForm(props, emit) {
       return isoString.substring(0, 10);
     }
   }
-  function isoToDMYInTimezone(isoString, timeZone) {
-    const ymd = isoDateInTimezone(isoString, timeZone);
-    if (!ymd) return '';
-    const [year, month, day] = ymd.split('-');
-    if (!year || !month || !day) return '';
-    return `${day}/${month}/${year}`;
+  function isoToLocalDateTime(isoString, timeZone) {
+    if (!isoString) return '';
+    const date = new Date(isoString);
+    if (Number.isNaN(date.getTime())) return '';
+    try {
+      const parts = getTimeZoneParts(date, timeZone);
+      if (!parts) {
+        return isoString.substring(0, 16);
+      }
+      const datePart = [parts.year, parts.month, parts.day].join('-');
+      const timePart = parts.hour + ':' + parts.minute;
+      return datePart + 'T' + timePart;
+    } catch (_e) {
+      return isoString.substring(0, 16);
+    }
   }
-  function dmyToYmd(dmy) {
-    const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(dmy || '');
+  function localDateTimeToIso(localValue, timeZone) {
+    const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(localValue || '');
     if (!match) return '';
-    const [, dd, mm, yyyy] = match;
-    return `${yyyy}-${mm}-${dd}`;
+    const [, year, month, day, hour, minute] = match;
+    const datePart = year + '-' + month + '-' + day;
+    const timePart = hour + ':' + minute + ':00';
+    return toUtcIsoFromDate(datePart, timePart, timeZone);
+  }
+  function compareLocalDateTime(a, b) {
+    if (!a || !b) return 0;
+    return a.localeCompare(b);
+  }
+  function shiftDateString(dateString, days) {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateString || '');
+    if (!match) return dateString;
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const base = new Date(Date.UTC(year, month - 1, day + days));
+    const yyyy = base.getUTCFullYear();
+    const mm = String(base.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(base.getUTCDate()).padStart(2, '0');
+    return yyyy + '-' + mm + '-' + dd;
+  }
+  function formatLocalDateTimeFromState(state) {
+    let totalMinutes = state.minutes + MIN_FUTURE_MINUTES;
+    let datePart = state.date;
+    while (totalMinutes >= 24 * 60) {
+      totalMinutes -= 24 * 60;
+      datePart = shiftDateString(datePart, 1);
+    }
+    while (totalMinutes < 0) {
+      totalMinutes += 24 * 60;
+      datePart = shiftDateString(datePart, -1);
+    }
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    const hh = String(hours).padStart(2, '0');
+    const mm = String(minutes).padStart(2, '0');
+    return datePart + 'T' + hh + ':' + mm;
+  }
+  function isValidLocalDateTime(value) {
+    return /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.test(value || '');
   }
   function minutesFromHM(value) {
     const match = /^(\d{2}):(\d{2})$/.exec(value || '');
@@ -412,10 +459,9 @@ export function useEventsForm(props, emit) {
   const canSelectChannel = computed(() => isNameValid.value);
   const canSelectAgent = computed(() => canSelectChannel.value && !!form.channel);
 
-  const startDateInput = ref('');
-  const endDateInput = ref('');
+  const startDateTimeInput = ref('');
+  const endDateTimeInput = ref('');
 
-  const startDateMin = computed(() => nowState.value.date);
   const startDateValue = computed(() => {
     if (!form.startAt) return '';
     return isoDateInTimezone(form.startAt, form.timezone || BRT_TIMEZONE);
@@ -424,16 +470,20 @@ export function useEventsForm(props, emit) {
     if (!form.endAt) return '';
     return isoDateInTimezone(form.endAt, form.timezone || BRT_TIMEZONE);
   });
-  const endDateMin = computed(() => startDateValue.value || startDateMin.value);
+
+  const startDateTimeMin = computed(() => formatLocalDateTimeFromState(nowState.value));
+  const endDateTimeMin = computed(
+    () => startDateTimeInput.value || startDateTimeMin.value
+  );
   const isStartDateInPast = computed(() => {
-    if (!startDateValue.value) return false;
-    return startDateValue.value < nowState.value.date;
+    if (!startDateTimeInput.value) return false;
+    return compareLocalDateTime(startDateTimeInput.value, startDateTimeMin.value) < 0;
   });
 
   const validDateRange = computed(() => {
     if (isStartDateInPast.value) return false;
-    if (!startDateValue.value || !endDateValue.value) return true;
-    return endDateValue.value >= startDateValue.value;
+    if (!startDateTimeInput.value || !endDateTimeInput.value) return true;
+    return compareLocalDateTime(endDateTimeInput.value, startDateTimeInput.value) >= 0;
   });
 
   function initDefaultDates() {
@@ -457,9 +507,9 @@ export function useEventsForm(props, emit) {
   watch(
     () => form.startAt,
     iso => {
-      const display = isoToDMYInTimezone(iso, form.timezone || BRT_TIMEZONE);
-      if (startDateInput.value !== display) {
-        startDateInput.value = display;
+      const display = isoToLocalDateTime(iso, form.timezone || BRT_TIMEZONE);
+      if (startDateTimeInput.value !== display) {
+        startDateTimeInput.value = display;
       }
     },
     { immediate: true }
@@ -468,109 +518,58 @@ export function useEventsForm(props, emit) {
   watch(
     () => form.endAt,
     iso => {
-      const display = isoToDMYInTimezone(iso, form.timezone || BRT_TIMEZONE);
-      if (endDateInput.value !== display) {
-        endDateInput.value = display;
+      const display = isoToLocalDateTime(iso, form.timezone || BRT_TIMEZONE);
+      if (endDateTimeInput.value !== display) {
+        endDateTimeInput.value = display;
       }
     },
     { immediate: true }
   );
 
-  watch(startDateInput, value => {
-    const masked = maskDateDDMMYYYY(value);
-    if (value !== masked) {
-      startDateInput.value = masked;
-      return;
-    }
-    if (!masked) {
+  watch(startDateTimeInput, value => {
+    if (!value) {
       form.startAt = '';
       return;
     }
-    if (!isValidDateDMY(masked)) return;
-    const ymd = dmyToYmd(masked);
-    if (!ymd) return;
-    let normalized = ymd;
-    const minYmd = startDateMin.value;
-    if (normalized < minYmd) {
-      normalized = minYmd;
-      const adjustedIso = toUtcIsoFromDate(
-        normalized,
-        '00:00:00',
-        form.timezone || BRT_TIMEZONE
-      );
-      const adjustedDisplay = isoToDMYInTimezone(
-        adjustedIso,
-        form.timezone || BRT_TIMEZONE
-      );
-      if (startDateInput.value !== adjustedDisplay) {
-        startDateInput.value = adjustedDisplay;
+    if (!isValidLocalDateTime(value)) return;
+    let normalized = value;
+    const minValue = startDateTimeMin.value;
+    if (compareLocalDateTime(normalized, minValue) < 0) {
+      normalized = minValue;
+      if (startDateTimeInput.value !== normalized) {
+        startDateTimeInput.value = normalized;
         return;
       }
     }
-    const iso = toUtcIsoFromDate(
-      normalized,
-      '00:00:00',
-      form.timezone || BRT_TIMEZONE
-    );
+    const iso = localDateTimeToIso(normalized, form.timezone || BRT_TIMEZONE);
     if (form.startAt !== iso) {
       form.startAt = iso;
     }
-    const currentEndYmd = endDateValue.value;
-    if (currentEndYmd && currentEndYmd < normalized) {
-      const alignedEndIso = toUtcIsoFromDate(
-        normalized,
-        '23:59:59',
-        form.timezone || BRT_TIMEZONE
-      );
-      if (form.endAt !== alignedEndIso) {
-        form.endAt = alignedEndIso;
-      }
-      const alignedDisplay = isoToDMYInTimezone(
-        alignedEndIso,
-        form.timezone || BRT_TIMEZONE
-      );
-      if (endDateInput.value !== alignedDisplay) {
-        endDateInput.value = alignedDisplay;
+    if (!endDateTimeInput.value || compareLocalDateTime(endDateTimeInput.value, normalized) < 0) {
+      endDateTimeInput.value = normalized;
+      const alignedIso = localDateTimeToIso(normalized, form.timezone || BRT_TIMEZONE);
+      if (form.endAt !== alignedIso) {
+        form.endAt = alignedIso;
       }
     }
   });
 
-  watch(endDateInput, value => {
-    const masked = maskDateDDMMYYYY(value);
-    if (value !== masked) {
-      endDateInput.value = masked;
-      return;
-    }
-    if (!masked) {
+  watch(endDateTimeInput, value => {
+    if (!value) {
       form.endAt = '';
       return;
     }
-    if (!isValidDateDMY(masked)) return;
-    const ymd = dmyToYmd(masked);
-    if (!ymd) return;
-    let normalized = ymd;
-    const minYmd = endDateMin.value;
-    if (normalized < minYmd) {
-      normalized = minYmd;
-      const adjustedIso = toUtcIsoFromDate(
-        normalized,
-        '23:59:59',
-        form.timezone || BRT_TIMEZONE
-      );
-      const adjustedDisplay = isoToDMYInTimezone(
-        adjustedIso,
-        form.timezone || BRT_TIMEZONE
-      );
-      if (endDateInput.value !== adjustedDisplay) {
-        endDateInput.value = adjustedDisplay;
+    if (!isValidLocalDateTime(value)) return;
+    let normalized = value;
+    const minValue = endDateTimeMin.value;
+    if (compareLocalDateTime(normalized, minValue) < 0) {
+      normalized = minValue;
+      if (endDateTimeInput.value !== normalized) {
+        endDateTimeInput.value = normalized;
         return;
       }
     }
-    const iso = toUtcIsoFromDate(
-      normalized,
-      '23:59:59',
-      form.timezone || BRT_TIMEZONE
-    );
+    const iso = localDateTimeToIso(normalized, form.timezone || BRT_TIMEZONE);
     if (form.endAt !== iso) {
       form.endAt = iso;
     }
@@ -580,17 +579,37 @@ export function useEventsForm(props, emit) {
     () => form.timezone,
     () => {
       const tz = form.timezone || BRT_TIMEZONE;
-      const startDisplay = isoToDMYInTimezone(form.startAt, tz);
-      if (startDateInput.value !== startDisplay) {
-        startDateInput.value = startDisplay;
+      if (form.startAt) {
+        const display = isoToLocalDateTime(form.startAt, tz);
+        if (startDateTimeInput.value !== display) {
+          startDateTimeInput.value = display;
+        }
+      } else {
+        startDateTimeInput.value = '';
       }
-      const endDisplay = isoToDMYInTimezone(form.endAt, tz);
-      if (endDateInput.value !== endDisplay) {
-        endDateInput.value = endDisplay;
+      if (form.endAt) {
+        const displayEnd = isoToLocalDateTime(form.endAt, tz);
+        if (endDateTimeInput.value !== displayEnd) {
+          endDateTimeInput.value = displayEnd;
+        }
+      } else {
+        endDateTimeInput.value = '';
       }
       ensureValidTimeSelection();
     }
   );
+
+  watch(startDateTimeMin, minValue => {
+    if (startDateTimeInput.value && compareLocalDateTime(startDateTimeInput.value, minValue) < 0) {
+      startDateTimeInput.value = minValue;
+    }
+  });
+
+  watch(endDateTimeMin, minValue => {
+    if (endDateTimeInput.value && compareLocalDateTime(endDateTimeInput.value, minValue) < 0) {
+      endDateTimeInput.value = minValue;
+    }
+  });
 
   const selectedTemplate = computed(
     () =>
@@ -1846,10 +1865,10 @@ export function useEventsForm(props, emit) {
     templateFallback,
 
     // computed
-    startDateInput,
-    endDateInput,
-    startDateMin,
-    endDateMin,
+    startDateTimeInput,
+    endDateTimeInput,
+    startDateTimeMin,
+    endDateTimeMin,
     isStartDateInPast,
     availableTimeOptions,
     isTimeSelectionEnabled,
