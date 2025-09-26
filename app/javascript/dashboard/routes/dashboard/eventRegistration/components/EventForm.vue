@@ -32,10 +32,10 @@ const {
   templateFallback,
 
   // computed
-  startDateTimeInput,
-  endDateTimeInput,
-  startDateTimeMin,
-  endDateTimeMin,
+  startDateInput,
+  endDateInput,
+  startDateMin,
+  endDateMin,
   isStartDateInPast,
   availableTimeOptions,
   isTimeSelectionEnabled,

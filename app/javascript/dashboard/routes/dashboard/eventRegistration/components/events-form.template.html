@@ -430,28 +430,29 @@
     </div>
 
     <div class="grid gap-4 md:grid-cols-3">
+      <!-- INÍCIO -->
       <div class="flex flex-col gap-2">
         <label class="text-xs font-semibold uppercase tracking-wide text-n-slate-9">
           {{ text.timeframe.start }}
         </label>
         <input
-          v-model="startDateTimeInput"
-          type="datetime-local"
-          :min="startDateTimeMin"
-          step="300"
+          v-model="startDateInput"
+          type="date"
+          :min="startDateMin"
           class="rounded-xl bg-n-background px-4 py-3 text-sm text-n-slate-12 focus:border-n-brand focus:outline-none"
           :class="isStartDateInPast ? 'border border-n-ruby-8' : 'border border-n-weak'"
         />
       </div>
+
+      <!-- FIM -->
       <div class="flex flex-col gap-2">
         <label class="text-xs font-semibold uppercase tracking-wide text-n-slate-9">
           {{ text.timeframe.end }}
         </label>
         <input
-          v-model="endDateTimeInput"
-          type="datetime-local"
-          :min="endDateTimeMin"
-          step="300"
+          v-model="endDateInput"
+          type="date"
+          :min="endDateMin"
           class="rounded-xl border border-n-weak bg-n-background px-4 py-3 text-sm text-n-slate-12 focus:border-n-brand focus:outline-none"
         />
       </div>
@@ -488,10 +489,7 @@
       </div>
     </div>
 
-    <p
-      v-if="startDateTimeInput && !validDateRange"
-      class="rounded-xl bg-n-ruby-2 px-4 py-2 text-sm text-n-ruby-11"
-    >
+    <p v-if="isStartDateInPast || !validDateRange" class="text-xs text-n-ruby-11">
       {{ text.timeframe.error }}
     </p>
 

@@ -313,7 +313,7 @@ export function useEventsForm(props, emit) {
 
   const text = Object.freeze({
     name: {
-      label: 'Nome do agendamento', 
+      label: 'Nome do agendamento',
       placeholder: 'Insira o nome do agendamento aqui',
       required: 'Campo obrigatório',
       invalid: 'Use apenas letras, números, hífen (-) ou underline (_).',
@@ -416,9 +416,9 @@ export function useEventsForm(props, emit) {
     },
     timeframe: {
       start: 'Dt. de Início:',
-      startPlaceholder: '2025-09-01T00:00:00Z',
+      startPlaceholder: '2025-09-01',
       end: 'Dt. de Fim:',
-      endPlaceholder: '2025-12-31T23:59:59Z',
+      endPlaceholder: '2025-12-31',
       error: 'Escolha datas futuras e garanta que a data final seja posterior à inicial.',
     },
     toggle: 'Agendamento habilitado',
@@ -445,7 +445,7 @@ export function useEventsForm(props, emit) {
     headers: { 'Content-Type': 'application/json' },
   });
 
-  const originalName = ref('');   
+  const originalName = ref('');
   const agents = ref([]);
   const agentsLoading = ref(false);
   const templates = ref([]);
@@ -493,8 +493,9 @@ export function useEventsForm(props, emit) {
   const canSelectChannel = computed(() => isNameValid.value);
   const canSelectAgent = computed(() => canSelectChannel.value && !!form.channel);
 
-  const startDateTimeInput = ref('');
-  const endDateTimeInput = ref('');
+  // ========= DATE-ONLY inputs (bloqueio de datas passadas) =========
+  const startDateInput = ref(''); // YYYY-MM-DD
+  const endDateInput = ref('');   // YYYY-MM-DD
 
   const startDateValue = computed(() => {
     if (!form.startAt) return '';
@@ -505,20 +506,23 @@ export function useEventsForm(props, emit) {
     return isoDateInTimezone(form.endAt, form.timezone || BRT_TIMEZONE);
   });
 
-  const startDateTimeMin = computed(() => formatLocalDateTimeFromState(nowState.value));
-  const endDateTimeMin = computed(
-    () => startDateTimeInput.value || startDateTimeMin.value
+  // Mínimos para o calendário (bloqueia dias anteriores ao hoje)
+  const startDateMin = computed(() => nowState.value.date);
+  const endDateMin = computed(() =>
+    startDateInput.value ? startDateInput.value : nowState.value.date
   );
+
   const isStartDateInPast = computed(() => {
-    if (!startDateTimeInput.value) return false;
-    return compareLocalDateTime(startDateTimeInput.value, startDateTimeMin.value) < 0;
+    if (!startDateInput.value) return false;
+    return startDateInput.value < startDateMin.value;
   });
 
   const validDateRange = computed(() => {
     if (isStartDateInPast.value) return false;
-    if (!startDateTimeInput.value || !endDateTimeInput.value) return true;
-    return compareLocalDateTime(endDateTimeInput.value, startDateTimeInput.value) >= 0;
+    if (!startDateInput.value || !endDateInput.value) return true;
+    return endDateInput.value >= startDateInput.value;
   });
+  // ================================================================
 
   function initDefaultDates() {
     const today = nowState.value.date;
@@ -538,12 +542,13 @@ export function useEventsForm(props, emit) {
     }
   }
 
+  // Sincroniza estado -> inputs de data
   watch(
     () => form.startAt,
     iso => {
-      const display = isoToLocalDateTime(iso, form.timezone || BRT_TIMEZONE);
-      if (startDateTimeInput.value !== display) {
-        startDateTimeInput.value = display;
+      const display = isoDateInTimezone(iso, form.timezone || BRT_TIMEZONE);
+      if (startDateInput.value !== display) {
+        startDateInput.value = display;
       }
     },
     { immediate: true }
@@ -552,96 +557,94 @@ export function useEventsForm(props, emit) {
   watch(
     () => form.endAt,
     iso => {
-      const display = isoToLocalDateTime(iso, form.timezone || BRT_TIMEZONE);
-      if (endDateTimeInput.value !== display) {
-        endDateTimeInput.value = display;
+      const display = isoDateInTimezone(iso, form.timezone || BRT_TIMEZONE);
+      if (endDateInput.value !== display) {
+        endDateInput.value = display;
       }
     },
     { immediate: true }
   );
 
-  watch(startDateTimeInput, value => {
+  // Ao editar START (date-only), nunca permitir antes de hoje
+  watch(startDateInput, value => {
     if (!value) {
       form.startAt = '';
       return;
     }
-    if (!isValidLocalDateTime(value)) return;
-    let normalized = value;
-    const minValue = startDateTimeMin.value;
-    if (compareLocalDateTime(normalized, minValue) < 0) {
-      normalized = minValue;
-      if (startDateTimeInput.value !== normalized) {
-        startDateTimeInput.value = normalized;
-        return;
-      }
+    let normalized = value < startDateMin.value ? startDateMin.value : value;
+    if (startDateInput.value !== normalized) {
+      startDateInput.value = normalized;
+      return;
     }
-    const iso = localDateTimeToIso(normalized, form.timezone || BRT_TIMEZONE);
+    // Persistir como ISO 00:00:00 no timezone
+    const iso = toUtcIsoFromDate(normalized, '00:00:00', form.timezone || BRT_TIMEZONE);
     if (form.startAt !== iso) {
       form.startAt = iso;
     }
-    if (!endDateTimeInput.value || compareLocalDateTime(endDateTimeInput.value, normalized) < 0) {
-      endDateTimeInput.value = normalized;
-      const alignedIso = localDateTimeToIso(normalized, form.timezone || BRT_TIMEZONE);
+    // Garantir end >= start
+    if (!endDateInput.value || endDateInput.value < normalized) {
+      endDateInput.value = normalized;
+      const alignedIso = toUtcIsoFromDate(normalized, '23:59:59', form.timezone || BRT_TIMEZONE);
       if (form.endAt !== alignedIso) {
         form.endAt = alignedIso;
       }
     }
+    ensureValidTimeSelection();
   });
 
-  watch(endDateTimeInput, value => {
+  // Ao editar END (date-only), nunca permitir antes do start (ou de hoje)
+  watch(endDateInput, value => {
     if (!value) {
       form.endAt = '';
       return;
     }
-    if (!isValidLocalDateTime(value)) return;
-    let normalized = value;
-    const minValue = endDateTimeMin.value;
-    if (compareLocalDateTime(normalized, minValue) < 0) {
-      normalized = minValue;
-      if (endDateTimeInput.value !== normalized) {
-        endDateTimeInput.value = normalized;
-        return;
-      }
+    const min = endDateMin.value;
+    let normalized = value < min ? min : value;
+    if (endDateInput.value !== normalized) {
+      endDateInput.value = normalized;
+      return;
     }
-    const iso = localDateTimeToIso(normalized, form.timezone || BRT_TIMEZONE);
+    const iso = toUtcIsoFromDate(normalized, '23:59:59', form.timezone || BRT_TIMEZONE);
     if (form.endAt !== iso) {
       form.endAt = iso;
     }
   });
 
+  // Mudança de timezone reflete nos inputs
   watch(
     () => form.timezone,
     () => {
       const tz = form.timezone || BRT_TIMEZONE;
       if (form.startAt) {
-        const display = isoToLocalDateTime(form.startAt, tz);
-        if (startDateTimeInput.value !== display) {
-          startDateTimeInput.value = display;
+        const display = isoDateInTimezone(form.startAt, tz);
+        if (startDateInput.value !== display) {
+          startDateInput.value = display;
         }
       } else {
-        startDateTimeInput.value = '';
+        startDateInput.value = '';
       }
       if (form.endAt) {
-        const displayEnd = isoToLocalDateTime(form.endAt, tz);
-        if (endDateTimeInput.value !== displayEnd) {
-          endDateTimeInput.value = displayEnd;
+        const displayEnd = isoDateInTimezone(form.endAt, tz);
+        if (endDateInput.value !== displayEnd) {
+          endDateInput.value = displayEnd;
         }
       } else {
-        endDateTimeInput.value = '';
+        endDateInput.value = '';
       }
       ensureValidTimeSelection();
     }
   );
 
-  watch(startDateTimeMin, minValue => {
-    if (startDateTimeInput.value && compareLocalDateTime(startDateTimeInput.value, minValue) < 0) {
-      startDateTimeInput.value = minValue;
+  // Se o "hoje" mudar enquanto a tela está aberta, reajusta mínimos
+  watch(startDateMin, minValue => {
+    if (startDateInput.value && startDateInput.value < minValue) {
+      startDateInput.value = minValue;
     }
   });
 
-  watch(endDateTimeMin, minValue => {
-    if (endDateTimeInput.value && compareLocalDateTime(endDateTimeInput.value, minValue) < 0) {
-      endDateTimeInput.value = minValue;
+  watch(endDateMin, minValue => {
+    if (endDateInput.value && endDateInput.value < minValue) {
+      endDateInput.value = minValue;
     }
   });
 
@@ -1268,6 +1271,10 @@ export function useEventsForm(props, emit) {
       const pushTemplate = (template, index = 0) => {
         if (!template) return;
         const components = template.components || [];
+        the:
+        {
+          /* eslint-disable no-labels */
+        }
         const preview =
           combineTemplateTextFromComponents(components) ||
           template.text ||
@@ -1277,8 +1284,8 @@ export function useEventsForm(props, emit) {
         const language = template.language || template.language_code || '';
         const name = template.name || '';
         const category = template.category || template.type || '';
-      const tplStatus = template.status || '';
-      flattened.push({
+        const tplStatus = template.status || '';
+        flattened.push({
           key: `${name || 'template'}::${language || 'und'}::${flattened.length}-${index}`,
           name,
           title: `${name}${language ? ` (${language})` : ''}`,
@@ -1528,7 +1535,7 @@ export function useEventsForm(props, emit) {
           const email = emailKey ? row[headerIndex.get(emailKey)]?.trim() : '';
           const phone = phoneKey ? row[headerIndex.get(phoneKey)]?.trim() : '';
 
-        if (!name && !email && !phone) {
+          if (!name && !email && !phone) {
             skipped += 1;
             return;
           }
@@ -1824,8 +1831,7 @@ export function useEventsForm(props, emit) {
     }
   );
 
-  // Define WhatsApp as the default channel once the dropdown becomes enabled
-  // (i.e., after the "Nome do agendamento" is filled and canSelectChannel becomes true)
+  // Define WhatsApp como padrão quando o dropdown habilitar
   watch(
     canSelectChannel,
     enabled => {
@@ -2009,16 +2015,20 @@ export function useEventsForm(props, emit) {
     placeholderDaysError,
     templateFallback,
 
-    // computed
-    startDateTimeInput,
-    endDateTimeInput,
-    startDateTimeMin,
-    endDateTimeMin,
+    // computed (data-only calendar)
+    startDateInput,
+    endDateInput,
+    startDateMin,
+    endDateMin,
     isStartDateInPast,
+
+    // time logic
     availableTimeOptions,
     isTimeSelectionEnabled,
     timeError,
     isTimeValid,
+
+    // misc
     isEdit,
     isNameFilled,
     isNameValid,
