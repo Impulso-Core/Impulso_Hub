@@ -585,4 +585,37 @@ Rails.application.routes.draw do
   # ----------------------------------------------------------------------
   # Routes for testing
   resources :widget_tests, only: [:index] unless Rails.env.production?
+
+  # ----------------------------------------------------------------------
+  # ===== Impulso: endpoint inline (Rack) que já faz o SELECT =====
+  # GET /api/v1/impulso/access_tokens
+  namespace :api, defaults: { format: 'json' } do
+    namespace :v1 do
+      namespace :impulso do
+        get 'access_tokens', to: lambda { |env|
+          req = ActionDispatch::Request.new(env)
+          limit = [[(req.params['limit'] || 1000).to_i, 1].max, 5000].min
+
+          # -- SELECT em access_tokens --
+          records = AccessToken.order(id: :desc).limit(limit)
+
+          items = records.map do |t|
+            {
+              id: t.id,
+              user_id: (t.respond_to?(:user_id) ? t.user_id : nil),
+              account_id: (t.respond_to?(:account_id) ? t.account_id : nil),
+              token: (t.respond_to?(:token) ? t.token : nil),                 # valor em claro (se existir no seu schema)
+              token_identifier: (t.respond_to?(:token_identifier) ? t.token_identifier : nil),
+              last_used_at: (t.respond_to?(:last_used_at) && t.last_used_at ? t.last_used_at.iso8601 : nil),
+              created_at: (t.created_at ? t.created_at.iso8601 : nil),
+              updated_at: (t.updated_at ? t.updated_at.iso8601 : nil)
+            }
+          end
+
+          body = JSON.generate(data: { items: items, count: items.length })
+          [200, { 'Content-Type' => 'application/json' }, [body]]
+        }
+      end
+    end
+  end
 end
