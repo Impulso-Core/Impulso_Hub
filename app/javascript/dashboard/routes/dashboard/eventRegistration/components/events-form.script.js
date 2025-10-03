@@ -1,17 +1,9 @@
-/* eslint-disable */
-import {
-  computed,
-  nextTick,
-  onBeforeUnmount,
-  onMounted,
-  reactive,
-  ref,
-  watch,
-} from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import axios from 'axios';
 import { useAlert } from 'dashboard/composables';
 
 export function useEventsForm(props, emit) {
+  // #region Constants & Helpers
   const API_BASE =
     'https://f4wzfjousg.execute-api.us-east-1.amazonaws.com/schedules';
   const AGENTS_API =
@@ -19,7 +11,7 @@ export function useEventsForm(props, emit) {
   const TEMPLATES_API =
     'https://f4wzfjousg.execute-api.us-east-1.amazonaws.com/get-whatsapp-templates-list';
 
-  const DAYS_OF_WEEK = [
+  const DAYS_OF_WEEK = Object.freeze([
     { value: 'MON', label: 'Segunda' },
     { value: 'TUE', label: 'Terça' },
     { value: 'WED', label: 'Quarta' },
@@ -27,140 +19,40 @@ export function useEventsForm(props, emit) {
     { value: 'FRI', label: 'Sexta' },
     { value: 'SAT', label: 'Sábado' },
     { value: 'SUN', label: 'Domingo' },
-  ];
-
-  function pad(n) {
-    return String(n).padStart(2, '0');
-  }
-  function generateTimeOptions(step = 15) {
-    const options = [];
-    for (let h = 0; h < 24; h += 1) {
-      for (let m = 0; m < 60; m += step) {
-        options.push(`${pad(h)}:${pad(m)}`);
-      }
-    }
-    return options;
-  }
-  const TIME_OPTIONS = Object.freeze(generateTimeOptions(15));
+  ]);
   const WEEKDAYS = Object.freeze(['MON', 'TUE', 'WED', 'THU', 'FRI']);
   const BRT_TIMEZONE = 'America/Sao_Paulo';
-  const MIN_FUTURE_MINUTES = 3; // minimal buffer before upcoming slot becomes unavailable
+  const MIN_FUTURE_MINUTES = 3;
   const NAME_ALLOWED_REGEX = /^[A-Za-z0-9_-]+$/;
   const PHONE_MAX_DIGITS = 13;
   const RESERVED_TEMPLATE_VARIABLES = new Set(['name']);
-
-  // Input mask helpers and validators
-  function onlyDigits(s) {
-    return (s || '').replace(/\D/g, '');
-  }
-
-  function expandScientificNotation(raw) {
-    const trimmed = (raw ?? '').toString().trim();
-    if (!trimmed) return '';
-    const normalized = trimmed.replace(',', '.');
+  const pad = value => String(value).padStart(2, '0');
+  const buildTimeOptions = (step = 5) =>
+    Array.from({ length: Math.floor((24 * 60) / step) }, (_, index) => {
+      const total = index * step;
+      return `${pad(Math.floor(total / 60))}:${pad(total % 60)}`;
+    });
+  const TIME_OPTIONS = Object.freeze(buildTimeOptions(5));
+  const onlyDigits = value => (value || '').replace(/\D/g, '');
+  const expandScientificNotation = raw => {
+    const normalized = (raw ?? '').toString().trim().replace(',', '.');
+    if (!normalized) return '';
     const match = /^([-+]?\d+(?:\.\d+)?)e\+?(\d+)$/i.exec(normalized);
-    if (!match) return trimmed;
-
-    const mantissa = match[1];
-    const exponent = Number(match[2]);
-    if (!Number.isFinite(exponent)) return trimmed;
-
+    if (!match) return normalized;
+    const [, mantissa, exponentString] = match;
+    const exponent = Number(exponentString);
+    if (!Number.isFinite(exponent)) return normalized;
     const sign = mantissa.startsWith('-') ? '-' : '';
-    const unsignedMantissa = mantissa.replace(/^[+-]/, '');
-    const [integerPart, fractionalPart = ''] = unsignedMantissa.split('.');
+    const unsigned = mantissa.replace(/^[+-]/, '');
+    const [integerPart, fractionalPart = ''] = unsigned.split('.');
     const digits = integerPart + fractionalPart;
     const shift = exponent - fractionalPart.length;
-
-    if (shift >= 0) {
-      return sign + digits + '0'.repeat(shift);
-    }
-
+    if (shift >= 0) return sign + digits + '0'.repeat(shift);
     const splitIndex = digits.length + shift;
-    if (splitIndex <= 0) {
-      return sign + '0.' + '0'.repeat(-splitIndex) + digits;
-    }
-
-    return sign + digits.slice(0, splitIndex) + '.' + digits.slice(splitIndex);
-  }
-
-  function extractPhoneDigits(raw) {
-    return onlyDigits(expandScientificNotation(raw));
-  }
-  function maskDateDDMMYYYY(raw) {
-    const d = onlyDigits(raw).slice(0, 8);
-    if (d.length <= 2) return d;
-    if (d.length <= 4) return `${d.slice(0, 2)}/${d.slice(2)}`;
-    return `${d.slice(0, 2)}/${d.slice(2, 4)}/${d.slice(4)}`;
-  }
-  function daysInMonth(y, m) {
-    // m is 1..12
-    return new Date(Date.UTC(y, m, 0)).getUTCDate();
-  }
-  function isValidDateDMY(str) {
-    if (typeof str !== 'string') return false;
-    const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(str);
-    if (!m) return false;
-    const dd = Number(m[1]);
-    const mm = Number(m[2]);
-    const yyyy = Number(m[3]);
-    if (yyyy < 1900 || yyyy > 9999) return false;
-    if (mm < 1 || mm > 12) return false;
-    if (dd < 1 || dd > daysInMonth(yyyy, mm)) return false;
-    return true;
-  }
-  function maskTimeHHMM(raw) {
-    const n = onlyDigits(raw).slice(0, 4);
-    if (n.length <= 2) return n;
-    return `${n.slice(0, 2)}:${n.slice(2)}`;
-  }
-  function isValidTimeHHMM(str) {
-    if (typeof str !== 'string') return false;
-    const m = /^(\d{2}):(\d{2})$/.exec(str);
-    if (!m) return false;
-    const hh = Number(m[1]);
-    const mm = Number(m[2]);
-    if (hh < 0 || hh > 23) return false;
-    if (mm < 0 || mm > 59) return false;
-    return true;
-  }
-  // Strict time masker: builds HH:MM and ignores invalid keystrokes (prevents >23:59)
-  function maskTimeHHMMStrict(raw) {
-    const d = onlyDigits(raw).slice(0, 4);
-    let outH1 = '';
-    let outH2 = '';
-    let outM1 = '';
-    let outM2 = '';
-
-    for (let i = 0; i < d.length; i += 1) {
-      const ch = d[i];
-      if (i === 0) {
-        // First hour digit must be 0-2
-        if (ch >= '0' && ch <= '2') outH1 = ch;
-      } else if (i === 1) {
-        if (!outH1) break;
-        // Second hour digit: if first is 2 then 0-3, else 0-9
-        if (outH1 === '2') {
-          if (ch >= '0' && ch <= '3') outH2 = ch;
-        } else {
-          outH2 = ch;
-        }
-      } else if (i === 2) {
-        // First minute digit 0-5
-        if (ch >= '0' && ch <= '5') outM1 = ch;
-      } else if (i === 3) {
-        // Second minute digit 0-9
-        outM2 = ch;
-      }
-    }
-
-    let res = '';
-    if (outH1) res += outH1;
-    if (outH2) res += outH2;
-    if (res.length > 0 && (outM1 || outM2)) res += ':';
-    if (outM1) res += outM1;
-    if (outM2) res += outM2;
-    return res;
-  }
+    if (splitIndex <= 0) return `${sign}0.${'0'.repeat(-splitIndex)}${digits}`;
+    return `${sign}${digits.slice(0, splitIndex)}.${digits.slice(splitIndex)}`;
+  };
+  const extractPhoneDigits = raw => onlyDigits(expandScientificNotation(raw));
 
   function getTimeZoneParts(date, timeZone) {
     try {
@@ -217,66 +109,6 @@ export function useEventsForm(props, emit) {
       return isoString.substring(0, 10);
     }
   }
-  function isoToLocalDateTime(isoString, timeZone) {
-    if (!isoString) return '';
-    const date = new Date(isoString);
-    if (Number.isNaN(date.getTime())) return '';
-    try {
-      const parts = getTimeZoneParts(date, timeZone);
-      if (!parts) {
-        return isoString.substring(0, 16);
-      }
-      const datePart = [parts.year, parts.month, parts.day].join('-');
-      const timePart = parts.hour + ':' + parts.minute;
-      return datePart + 'T' + timePart;
-    } catch (_e) {
-      return isoString.substring(0, 16);
-    }
-  }
-  function localDateTimeToIso(localValue, timeZone) {
-    const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(localValue || '');
-    if (!match) return '';
-    const [, year, month, day, hour, minute] = match;
-    const datePart = year + '-' + month + '-' + day;
-    const timePart = hour + ':' + minute + ':00';
-    return toUtcIsoFromDate(datePart, timePart, timeZone);
-  }
-  function compareLocalDateTime(a, b) {
-    if (!a || !b) return 0;
-    return a.localeCompare(b);
-  }
-  function shiftDateString(dateString, days) {
-    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateString || '');
-    if (!match) return dateString;
-    const year = Number(match[1]);
-    const month = Number(match[2]);
-    const day = Number(match[3]);
-    const base = new Date(Date.UTC(year, month - 1, day + days));
-    const yyyy = base.getUTCFullYear();
-    const mm = String(base.getUTCMonth() + 1).padStart(2, '0');
-    const dd = String(base.getUTCDate()).padStart(2, '0');
-    return yyyy + '-' + mm + '-' + dd;
-  }
-  function formatLocalDateTimeFromState(state) {
-    let totalMinutes = state.minutes + MIN_FUTURE_MINUTES;
-    let datePart = state.date;
-    while (totalMinutes >= 24 * 60) {
-      totalMinutes -= 24 * 60;
-      datePart = shiftDateString(datePart, 1);
-    }
-    while (totalMinutes < 0) {
-      totalMinutes += 24 * 60;
-      datePart = shiftDateString(datePart, -1);
-    }
-    const hours = Math.floor(totalMinutes / 60);
-    const minutes = totalMinutes % 60;
-    const hh = String(hours).padStart(2, '0');
-    const mm = String(minutes).padStart(2, '0');
-    return datePart + 'T' + hh + ':' + mm;
-  }
-  function isValidLocalDateTime(value) {
-    return /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.test(value || '');
-  }
   function minutesFromHM(value) {
     const match = /^(\d{2}):(\d{2})$/.exec(value || '');
     if (!match) return null;
@@ -311,6 +143,16 @@ export function useEventsForm(props, emit) {
     return (raw || '').replace(/[^A-Za-z0-9_-]/g, '');
   }
 
+  const normalizeVarKey = value => {
+    const trimmed = (value || '').toString().trim();
+    const positional = /^var(\d+)$/i.exec(trimmed);
+    return positional ? positional[1] : trimmed.toLowerCase().replace(/[^a-z0-9_.-]/g, '_');
+  };
+
+  // #endregion Constants & Helpers
+
+  // #region Text Resources
+
   const text = Object.freeze({
     name: {
       label: 'Nome do agendamento',
@@ -323,7 +165,6 @@ export function useEventsForm(props, emit) {
       placeholder: 'Selecionar canal',
       options: {
         whatsapp: 'WhatsApp',
-        // email: 'Email (SES)',
       },
     },
     tooltips: {
@@ -336,10 +177,11 @@ export function useEventsForm(props, emit) {
       placeholder: 'Selecionar...',
     },
     customField: {
-      title: 'Variáveis',
+      title: 'Variáveis Personalizadas',
       empty:
-        'Nenhuma variável detectada ainda. Utilize placeholders como {{nome}} na mensagem para adicioná-las automaticamente.',
-      valuePlaceholder: 'Preencha o valor para este destinatário',
+        'Nenhuma variável detectada. Use {{variavel}} nas mensagens para adicioná-las automaticamente.',
+      valuePlaceholder: 'Preencha o valor',
+      headerNote: '* Variáveis do cabeçalho do template',
     },
     recipients: {
       title: 'Destinatários',
@@ -390,7 +232,9 @@ export function useEventsForm(props, emit) {
         sync: 'Sincronizar',
         apply: 'Aplicar',
       },
-      templatePlaceholders: 'Placeholders do template:',
+      templatePlaceholders: 'Variáveis do template por componente:',
+      templatePlaceholdersHeader: 'Cabeçalho:',
+      templatePlaceholdersBody: 'Corpo:',
     },
     placeholders: {
       global: message => message,
@@ -440,6 +284,10 @@ export function useEventsForm(props, emit) {
     },
   });
 
+  // #endregion Text Resources
+
+  // #region Reactive State
+
   const api = axios.create({
     baseURL: API_BASE,
     headers: { 'Content-Type': 'application/json' },
@@ -479,6 +327,10 @@ export function useEventsForm(props, emit) {
   const firstContactAll = ref(false);
   const nowState = ref(getNowInTimezone(BRT_TIMEZONE));
 
+  // #endregion Reactive State
+
+  // #region Computed State & Date Sync
+
   const isEdit = computed(() => Boolean(originalName.value));
 
   const isNameFilled = computed(() => !!form.name);
@@ -493,9 +345,8 @@ export function useEventsForm(props, emit) {
   const canSelectChannel = computed(() => isNameValid.value);
   const canSelectAgent = computed(() => canSelectChannel.value && !!form.channel);
 
-  // ========= DATE-ONLY inputs (bloqueio de datas passadas) =========
-  const startDateInput = ref(''); // YYYY-MM-DD
-  const endDateInput = ref('');   // YYYY-MM-DD
+  const startDateInput = ref('');
+  const endDateInput = ref('');
 
   const startDateValue = computed(() => {
     if (!form.startAt) return '';
@@ -506,7 +357,6 @@ export function useEventsForm(props, emit) {
     return isoDateInTimezone(form.endAt, form.timezone || BRT_TIMEZONE);
   });
 
-  // Mínimos para o calendário (bloqueia dias anteriores ao hoje)
   const startDateMin = computed(() => nowState.value.date);
   const endDateMin = computed(() =>
     startDateInput.value ? startDateInput.value : nowState.value.date
@@ -522,34 +372,19 @@ export function useEventsForm(props, emit) {
     if (!startDateInput.value || !endDateInput.value) return true;
     return endDateInput.value >= startDateInput.value;
   });
-  // ================================================================
-
-  function initDefaultDates() {
+  const initDefaultDates = () => {
     const today = nowState.value.date;
-    if (!form.startAt) {
-      form.startAt = toUtcIsoFromDate(
-        today,
-        '00:00:00',
-        form.timezone || BRT_TIMEZONE
-      );
-    }
-    if (!form.endAt) {
-      form.endAt = toUtcIsoFromDate(
-        today,
-        '23:59:59',
-        form.timezone || BRT_TIMEZONE
-      );
-    }
-  }
+    if (!form.startAt)
+      form.startAt = toUtcIsoFromDate(today, '00:00:00', form.timezone || BRT_TIMEZONE);
+    if (!form.endAt)
+      form.endAt = toUtcIsoFromDate(today, '23:59:59', form.timezone || BRT_TIMEZONE);
+  };
 
-  // Sincroniza estado -> inputs de data
   watch(
     () => form.startAt,
     iso => {
       const display = isoDateInTimezone(iso, form.timezone || BRT_TIMEZONE);
-      if (startDateInput.value !== display) {
-        startDateInput.value = display;
-      }
+      if (startDateInput.value !== display) startDateInput.value = display;
     },
     { immediate: true }
   );
@@ -558,111 +393,56 @@ export function useEventsForm(props, emit) {
     () => form.endAt,
     iso => {
       const display = isoDateInTimezone(iso, form.timezone || BRT_TIMEZONE);
-      if (endDateInput.value !== display) {
-        endDateInput.value = display;
-      }
+      if (endDateInput.value !== display) endDateInput.value = display;
     },
     { immediate: true }
   );
-
-  // Ao editar START (date-only), nunca permitir antes de hoje
   watch(startDateInput, value => {
-    if (!value) {
-      form.startAt = '';
-      return;
-    }
-    let normalized = value < startDateMin.value ? startDateMin.value : value;
-    if (startDateInput.value !== normalized) {
-      startDateInput.value = normalized;
-      return;
-    }
-    // Persistir como ISO 00:00:00 no timezone
+    if (!value) return (form.startAt = '');
+    const normalized = value < startDateMin.value ? startDateMin.value : value;
+    if (startDateInput.value !== normalized) return (startDateInput.value = normalized);
     const iso = toUtcIsoFromDate(normalized, '00:00:00', form.timezone || BRT_TIMEZONE);
-    if (form.startAt !== iso) {
-      form.startAt = iso;
-    }
-    // Garantir end >= start
+    if (form.startAt !== iso) form.startAt = iso;
     if (!endDateInput.value || endDateInput.value < normalized) {
       endDateInput.value = normalized;
       const alignedIso = toUtcIsoFromDate(normalized, '23:59:59', form.timezone || BRT_TIMEZONE);
-      if (form.endAt !== alignedIso) {
-        form.endAt = alignedIso;
-      }
+      if (form.endAt !== alignedIso) form.endAt = alignedIso;
     }
     ensureValidTimeSelection();
   });
-
-  // Ao editar END (date-only), nunca permitir antes do start (ou de hoje)
   watch(endDateInput, value => {
-    if (!value) {
-      form.endAt = '';
-      return;
-    }
+    if (!value) return (form.endAt = '');
     const min = endDateMin.value;
-    let normalized = value < min ? min : value;
-    if (endDateInput.value !== normalized) {
-      endDateInput.value = normalized;
-      return;
-    }
+    const normalized = value < min ? min : value;
+    if (endDateInput.value !== normalized) return (endDateInput.value = normalized);
     const iso = toUtcIsoFromDate(normalized, '23:59:59', form.timezone || BRT_TIMEZONE);
-    if (form.endAt !== iso) {
-      form.endAt = iso;
-    }
+    if (form.endAt !== iso) form.endAt = iso;
   });
-
-  // Mudança de timezone reflete nos inputs
   watch(
     () => form.timezone,
     () => {
       const tz = form.timezone || BRT_TIMEZONE;
-      if (form.startAt) {
-        const display = isoDateInTimezone(form.startAt, tz);
-        if (startDateInput.value !== display) {
-          startDateInput.value = display;
-        }
-      } else {
-        startDateInput.value = '';
-      }
-      if (form.endAt) {
-        const displayEnd = isoDateInTimezone(form.endAt, tz);
-        if (endDateInput.value !== displayEnd) {
-          endDateInput.value = displayEnd;
-        }
-      } else {
-        endDateInput.value = '';
-      }
+      startDateInput.value = form.startAt
+        ? isoDateInTimezone(form.startAt, tz)
+        : '';
+      endDateInput.value = form.endAt ? isoDateInTimezone(form.endAt, tz) : '';
       ensureValidTimeSelection();
     }
   );
-
-  // Se o "hoje" mudar enquanto a tela está aberta, reajusta mínimos
   watch(startDateMin, minValue => {
-    if (startDateInput.value && startDateInput.value < minValue) {
-      startDateInput.value = minValue;
-    }
+    if (startDateInput.value && startDateInput.value < minValue) startDateInput.value = minValue;
   });
-
   watch(endDateMin, minValue => {
-    if (endDateInput.value && endDateInput.value < minValue) {
-      endDateInput.value = minValue;
-    }
+    if (endDateInput.value && endDateInput.value < minValue) endDateInput.value = minValue;
   });
 
   const selectedTemplate = computed(
-    () =>
-      templates.value.find(
-        template => template.key === selectedTemplateKey.value
-      ) || null
+    () => templates.value.find(template => template.key === selectedTemplateKey.value) || null
   );
-
-  const showFirstContactTemplate = computed(() =>
-    Boolean(firstContactAll.value)
-  );
-
+  const showFirstContactTemplate = computed(() => Boolean(firstContactAll.value));
   const availableTimeOptions = computed(() => {
     if (!startDateValue.value) return [];
-    const today = startDateValue.value === nowState.value.date;
-    const minMinutes = today
+    const minMinutes = startDateValue.value === nowState.value.date
       ? nowState.value.minutes + MIN_FUTURE_MINUTES
       : 0;
     return TIME_OPTIONS.filter(option => {
@@ -670,12 +450,8 @@ export function useEventsForm(props, emit) {
       return value != null && value >= minMinutes;
     });
   });
-  const hasAvailableTimes = computed(
-    () => availableTimeOptions.value.length > 0
-  );
-  const isTimeSelectionEnabled = computed(
-    () => Boolean(startDateValue.value) && hasAvailableTimes.value
-  );
+  const hasAvailableTimes = computed(() => availableTimeOptions.value.length > 0);
+  const isTimeSelectionEnabled = computed(() => Boolean(startDateValue.value) && hasAvailableTimes.value);
   const isTimeValid = computed(() => {
     if (!startDateValue.value) return false;
     if (!form.time) return false;
@@ -692,358 +468,303 @@ export function useEventsForm(props, emit) {
     return '';
   });
 
-  function ensureValidTimeSelection() {
-    if (!startDateValue.value) {
-      form.time = '';
-      return;
-    }
+  const ensureValidTimeSelection = () => {
+    if (!startDateValue.value) return (form.time = '');
     const options = availableTimeOptions.value;
-    if (!options.length) {
-      form.time = '';
-      return;
-    }
-    if (!form.time || !options.includes(form.time)) {
-      form.time = options[0];
-      return;
-    }
+    if (!options.length) return (form.time = '');
+    if (!form.time || !options.includes(form.time)) return (form.time = options[0]);
     const currentMinutes = minutesFromHM(form.time);
     const minMinutes = startDateValue.value === nowState.value.date
       ? nowState.value.minutes + MIN_FUTURE_MINUTES
       : 0;
-    if (currentMinutes != null && currentMinutes < minMinutes) {
-      form.time = options[0];
-    }
-  }
+    if (currentMinutes != null && currentMinutes < minMinutes) form.time = options[0];
+  };
 
   const variableEntries = computed(() => {
-    const entries = [];
+    const list = [];
+    const componentMap = new Map();
+
+    if (selectedTemplate.value?.placeholderEntries) {
+      Object.entries(selectedTemplate.value.placeholderEntries).forEach(
+        ([component, entries]) => {
+          (entries || []).forEach(({ normalized }) => {
+            if (!normalized) return;
+            if (!componentMap.has(normalized)) componentMap.set(normalized, component);
+          });
+        }
+      );
+    } else if (templateFallback.value?.params) {
+      Object.entries(templateFallback.value.params).forEach(([component, mapping]) => {
+        Object.entries(mapping || {}).forEach(([, value]) => {
+          const match = /{{\s*vars\.([a-zA-Z0-9_.-]+)\s*}}/i.exec(value || '');
+          if (!match?.[1]) return;
+          const normalized = normalizeVarKey(match[1]);
+          if (normalized && !componentMap.has(normalized)) componentMap.set(normalized, component);
+        });
+      });
+    }
+
     knownVariables.value.forEach((info, key) => {
       if (RESERVED_TEMPLATE_VARIABLES.has(key)) return;
-      entries.push({ key, label: info.raw || key });
+      list.push({
+        key,
+        label: info.raw || key,
+        component: componentMap.get(key) || null,
+      });
     });
-    return entries;
+
+    return list;
+  });
+
+  const hasHeaderVars = computed(() => {
+    if (selectedTemplate.value?.placeholderEntries) {
+      return Object.prototype.hasOwnProperty.call(
+        selectedTemplate.value.placeholderEntries,
+        'header'
+      );
+    }
+    if (templateFallback.value?.params) {
+      return Object.prototype.hasOwnProperty.call(templateFallback.value.params, 'header');
+    }
+    return false;
+  });
+
+  const hasBodyVars = computed(() => {
+    if (selectedTemplate.value?.placeholderEntries) {
+      return Object.prototype.hasOwnProperty.call(
+        selectedTemplate.value.placeholderEntries,
+        'body'
+      );
+    }
+    if (templateFallback.value?.params) {
+      return Object.prototype.hasOwnProperty.call(templateFallback.value.params, 'body');
+    }
+    return false;
   });
 
   const variableLabelMap = computed(() => {
     const map = {};
     knownVariables.value.forEach((info, key) => {
-      if (RESERVED_TEMPLATE_VARIABLES.has(key)) return;
-      map[key] = info.raw || key;
+      if (!RESERVED_TEMPLATE_VARIABLES.has(key)) map[key] = info.raw || key;
     });
     return map;
   });
 
+  // #endregion Computed State & Date Sync
+
+  // #region Template & Recipient Helpers
+
   const TEMPLATE_PLACEHOLDER_REGEX = /\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g;
 
-  function combineTemplateTextFromComponents(components) {
-    const sections = [];
-    (components || []).forEach(component => {
-      const type = (component?.type || '').toUpperCase();
-      const textVal = component?.text || '';
-      if (!textVal) return;
-      if (type === 'HEADER' && (component?.format || '').toUpperCase() === 'TEXT') {
-        sections.push(textVal);
-      } else if (type === 'BODY') {
-        sections.push(textVal);
-      } else if (type === 'FOOTER') {
-        sections.push(textVal);
-      }
-    });
-    return sections.join('\n\n');
-  }
+  const combineTemplateTextFromComponents = components =>
+    (components || [])
+      .filter(component => {
+        const type = (component?.type || '').toUpperCase();
+        if (type === 'HEADER') return (component?.format || '').toUpperCase() === 'TEXT';
+        return type === 'BODY' || type === 'FOOTER';
+      })
+      .map(component => component?.text || '')
+      .filter(Boolean)
+      .join('\n\n');
 
-  function extractPlaceholdersFromComponents(components) {
+  const extractPlaceholdersFromComponents = components => {
     const flat = [];
     const byComponent = {};
-
     (components || []).forEach(component => {
       const type = (component?.type || '').toLowerCase();
       const textVal = component?.text || '';
       if (!textVal) return;
-
-      TEMPLATE_PLACEHOLDER_REGEX.lastIndex = 0;
       const entries = [];
-      let match = TEMPLATE_PLACEHOLDER_REGEX.exec(textVal);
-      while (match) {
-        const rawKey = (match[1] || '').trim();
-        const positionalMatch = /^var(\d+)$/i.exec(rawKey);
-        const normalized = positionalMatch
-          ? positionalMatch[1]
-          : normalizeVarKey(rawKey);
-        if (normalized) {
-          entries.push({ raw: rawKey, normalized });
-          if (!flat.includes(normalized)) {
-            flat.push(normalized);
-          }
-        }
-        match = TEMPLATE_PLACEHOLDER_REGEX.exec(textVal);
-      }
-
-      if (entries.length) {
-        byComponent[type] = entries;
-      }
+      textVal.replace(TEMPLATE_PLACEHOLDER_REGEX, (_match, rawKey) => {
+        const raw = (rawKey || '').trim();
+        const positional = /^var(\d+)$/i.exec(raw);
+        const normalized = positional ? positional[1] : normalizeVarKey(raw);
+        if (!normalized) return '';
+        entries.push({ raw, normalized, component: type });
+        if (!flat.includes(normalized)) flat.push(normalized);
+        return '';
+      });
+      if (entries.length) byComponent[type] = entries;
     });
-
     return { flat, byComponent };
-  }
+  };
 
-  function buildTemplateFallbackObject(template) {
+  const buildTemplateFallbackObject = template => {
     if (!template) return null;
-
     const fallback = {
       name: template.name,
       language: template.language,
       category: template.category,
+      ...(template.parameterFormat ? { parameter_format: template.parameterFormat } : {}),
     };
-
-    if (template.parameterFormat) {
-      fallback.parameter_format = template.parameterFormat;
-    }
-
     const params = {};
-    const entriesByComponent = template.placeholderEntries || {};
-    Object.entries(entriesByComponent).forEach(([component, entries]) => {
-      if (!entries?.length) return;
+    Object.entries(template.placeholderEntries || {}).forEach(([component, entries]) => {
       const mapping = {};
-      entries.forEach(({ raw, normalized }) => {
+      (entries || []).forEach(({ raw, normalized }) => {
         if (!normalized) return;
-        const positionalMatch = /^var(\d+)$/.exec(raw);
-        const paramKey = positionalMatch ? positionalMatch[1] : raw;
+        const positional = /^var(\d+)$/.exec(raw);
+        const paramKey = positional ? positional[1] : raw;
         mapping[paramKey] = `{{vars.${normalized}}}`;
       });
-      if (Object.keys(mapping).length) {
-        params[component] = mapping;
-      }
+      if (Object.keys(mapping).length) params[component] = mapping;
     });
-
-    if (Object.keys(params).length) {
-      fallback.params = params;
-    }
-
+    if (Object.keys(params).length) fallback.params = params;
     return fallback;
-  }
+  };
 
-  function normalizeVarKey(value) {
-    const trimmed = (value || '')
-      .toString()
-      .trim();
-    const positionalMatch = /^var(\d+)$/i.exec(trimmed);
-    if (positionalMatch) {
-      return positionalMatch[1];
-    }
-    return trimmed.toLowerCase().replace(/[^a-z0-9_.-]/g, '_');
-  }
-
-  function normalizeHeader(value) {
-    return (value || '')
+  const normalizeHeader = value =>
+    (value || '')
       .toString()
       .trim()
       .toLowerCase()
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
       .replace(/[^a-z0-9_ -]/g, '');
-  }
 
-  function isValidEmail(email) {
-    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email || '');
-  }
+  const isValidEmail = email => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email || '');
 
-  function isLikelyPhone(phone) {
+  const isLikelyPhone = phone => {
     const digits = extractPhoneDigits(phone);
-    if (!digits) return false;
-    if (digits.length > PHONE_MAX_DIGITS) return false;
-    if (digits.startsWith('55')) {
-      return digits.length >= 12;
-    }
-    return digits.length >= 10;
-  }
+    if (!digits || digits.length > PHONE_MAX_DIGITS) return false;
+    return digits.startsWith('55') ? digits.length >= 12 : digits.length >= 10;
+  };
 
-  function normalizePhoneValue(raw) {
+  const normalizePhoneValue = raw => {
     const digits = extractPhoneDigits(raw);
-    let normalized = digits.startsWith('55') ? digits : `55${digits}`;
-    normalized = normalized.replace(/^55+/, '55');
-    normalized = normalized.slice(0, PHONE_MAX_DIGITS);
-    if (!normalized) return '+55';
-    if (normalized === '55') return '+55';
+    const withCountry = digits.startsWith('55') ? digits : `55${digits}`;
+    const normalized = withCountry.replace(/^55+/, '55').slice(0, PHONE_MAX_DIGITS);
+    if (!normalized || normalized === '55') return '+55';
     return `+${normalized}`;
-  }
+  };
 
-  function hasPhoneDigits(value) {
+  const hasPhoneDigits = value => {
     const digits = extractPhoneDigits(value);
     if (!digits) return false;
-    if (digits.startsWith('55')) {
-      return digits.length > 2;
-    }
-    return digits.length > 0;
-  }
+    return digits.startsWith('55') ? digits.length > 2 : digits.length > 0;
+  };
 
-  function recipientHasValue(recipient, key) {
+  const recipientHasValue = (recipient, key) => {
     const normalized = normalizeVarKey(key);
-    if (normalized === 'name' || normalized === 'nome') {
-      return Boolean(recipient.name && recipient.name.trim());
-    }
-    if (normalized === 'email') {
-      return Boolean(recipient.email && recipient.email.trim());
-    }
-    if (['phone', 'telefone', 'celular', 'whatsapp'].includes(normalized)) {
-      return hasPhoneDigits(recipient.phone);
-    }
+    if (normalized === 'name' || normalized === 'nome') return Boolean(recipient.name?.trim());
+    if (normalized === 'email') return Boolean(recipient.email?.trim());
+    if (['phone', 'telefone', 'celular', 'whatsapp'].includes(normalized)) return hasPhoneDigits(recipient.phone);
     const value = recipient.vars?.[normalized];
     return value !== undefined && String(value).trim() !== '';
-  }
+  };
 
-  function extractPlaceholders(textValue) {
+  const sanitizeRecipientVars = vars =>
+    Object.fromEntries(
+      Object.entries(vars || {})
+        .map(([key, value]) => [normalizeVarKey(key), value])
+        .filter(([key]) => key && !RESERVED_TEMPLATE_VARIABLES.has(key))
+    );
+
+  const normalizeRecipientForChannel = (recipient, channel) => ({
+    name: recipient.name || '',
+    email: channel === 'email' ? recipient.email || '' : undefined,
+    phone: channel === 'whatsapp' ? normalizePhoneValue(recipient.phone || '') : undefined,
+    vars: sanitizeRecipientVars(recipient.vars),
+    primeiroContato: Boolean(recipient.primeiroContato),
+  });
+
+  const normalizeRecipientsForChannel = (recipients, channel) =>
+    recipients.map(recipient => ({
+      ...normalizeRecipientForChannel(recipient, channel),
+      vars: sanitizeRecipientVars(recipient.vars),
+    }));
+
+  const extractPlaceholders = textValue => {
     const placeholders = new Map();
     if (!textValue) return placeholders;
-    const regex = /\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g;
-    let match = regex.exec(textValue);
-    while (match) {
-      const raw = (match[1] || '').trim();
+    textValue.replace(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g, (_match, rawKey) => {
+      const raw = (rawKey || '').trim();
       const normalized = normalizeVarKey(raw);
-      if (normalized) {
-        if (!placeholders.has(normalized)) {
-          placeholders.set(normalized, raw);
-        }
-      }
-      match = regex.exec(textValue);
-    }
+      if (normalized && !placeholders.has(normalized)) placeholders.set(normalized, raw);
+      return '';
+    });
     return placeholders;
-  }
+  };
 
-  function placeholdersSatisfied() {
-    if (!showFirstContactTemplate.value) {
-      placeholderGlobalError.value = '';
-      placeholderDaysError.value = '';
-      return true;
-    }
+  const placeholdersSatisfied = () => {
     const requiredKeys = Array.from(requiredPlaceholders.value || []);
-    if (!requiredKeys.length) {
+    if (!showFirstContactTemplate.value || !requiredKeys.length) {
       placeholderGlobalError.value = '';
       placeholderDaysError.value = '';
       return true;
     }
-
-    const missingCounter = new Map(requiredKeys.map(key => [key, 0]));
+    const missingCounts = new Map(requiredKeys.map(key => [key, 0]));
     form.recipients.forEach(recipient => {
       requiredKeys.forEach(key => {
-        if (!recipientHasValue(recipient, key)) {
-          missingCounter.set(key, missingCounter.get(key) + 1);
-        }
+        if (!recipientHasValue(recipient, key)) missingCounts.set(key, missingCounts.get(key) + 1);
       });
     });
-
-    const missingList = Array.from(missingCounter.entries()).filter(
-      ([, count]) => count > 0
-    );
-    if (!missingList.length) {
+    const missing = Array.from(missingCounts.entries()).filter(([, count]) => count > 0);
+    if (!missing.length) {
       placeholderGlobalError.value = '';
       placeholderDaysError.value = '';
       return true;
     }
-
     const varsMap = knownVariables.value;
-    const message = `Preencha as variáveis requeridas nos destinatários: ${missingList
-      .map(([key, count]) => {
-        const label = varsMap.get(key)?.raw || key;
-        return `${label} (${count})`;
-      })
-      .join(', ')}.`;
-
+    const summary = missing
+      .map(([key, count]) => `${varsMap.get(key)?.raw || key} (${count})`)
+      .join(', ');
+    const message = `Preencha as variáveis requeridas nos destinatários: ${summary}.`;
     placeholderGlobalError.value = text.placeholders.global(message);
-    placeholderDaysError.value =
-      form.channel === 'whatsapp' ? text.placeholders.day(message) : '';
-
+    placeholderDaysError.value = form.channel === 'whatsapp' ? text.placeholders.day(message) : '';
     return false;
-  }
+  };
 
   const isValid = computed(() => {
-    if (!isNameValid.value) return false;
-    if (!form.channel) return false;
-    if (!form.recipients.length) return false;
-
+    if (!isNameValid.value || !form.channel || !form.recipients.length) return false;
     if (form.channel === 'email') {
-      const everyHasEmail = form.recipients.every(recipient =>
-        Boolean(recipient.email)
-      );
-      if (!everyHasEmail) return false;
+      if (!form.recipients.every(recipient => Boolean(recipient.email?.trim()))) return false;
     } else {
-      const everyHasPhone = form.recipients.every(recipient =>
-        hasPhoneDigits(recipient.phone)
-      );
-      if (!everyHasPhone) return false;
+      if (!form.recipients.every(recipient => hasPhoneDigits(recipient.phone))) return false;
       if (!form.agent) return false;
     }
-
-    if (!startDateValue.value || !endDateValue.value) return false;
-    if (!validDateRange.value) return false;
-    if (!form.daysOfWeek.length) return false;
-    if (!isTimeSelectionEnabled.value) return false;
-    if (!isTimeValid.value) return false;
-    if (!form.timezone) return false;
-    if (!placeholdersSatisfied()) return false;
-
+    if (!startDateValue.value || !endDateValue.value || !validDateRange.value) return false;
+    if (!form.daysOfWeek.length || !isTimeSelectionEnabled.value || !isTimeValid.value) return false;
+    if (!form.timezone || !placeholdersSatisfied()) return false;
     if (form.channel === 'whatsapp') {
-      if (showFirstContactTemplate.value) {
-        // Require selecting a first-contact template when the toggle is enabled
-        if (!selectedTemplate.value) return false;
-      } else {
-        const allDaysHaveMessage = form.daysOfWeek.every(day => {
-          const content = form.payload?.messagesByDay?.[day] || '';
-          return Boolean(content.trim());
-        });
+      if (showFirstContactTemplate.value && !selectedTemplate.value) return false;
+      if (!showFirstContactTemplate.value) {
+        const allDaysHaveMessage = form.daysOfWeek.every(day =>
+          Boolean((form.payload?.messagesByDay?.[day] || '').trim())
+        );
         if (!allDaysHaveMessage) return false;
       }
     }
-
     return true;
   });
 
-  function recomputeRequiredPlaceholders() {
+  const recomputeRequiredPlaceholders = () => {
     const details = new Map();
-
-    const addPlaceholder = (normalized, raw) => {
+    const record = (normalized, raw) => {
       if (!normalized) return;
-      const existing = details.get(normalized) || { raw: raw || normalized };
-      if (!existing.raw && raw) {
-        existing.raw = raw;
-      }
-      details.set(normalized, existing);
+      const current = details.get(normalized) || { raw: raw || normalized };
+      if (!current.raw && raw) current.raw = raw;
+      details.set(normalized, current);
     };
 
     if (form.channel === 'email') {
       ['subject', 'text', 'html'].forEach(key => {
-        const placeholders = extractPlaceholders(form.payload?.[key]);
-        placeholders.forEach((raw, normalized) => addPlaceholder(normalized, raw));
+        extractPlaceholders(form.payload?.[key]).forEach((raw, normalized) => record(normalized, raw));
       });
     } else {
       const byDay = form.payload?.messagesByDay || {};
       form.daysOfWeek.forEach(day => {
-        const placeholders = extractPlaceholders(byDay[day]);
-        placeholders.forEach((raw, normalized) =>
-          addPlaceholder(normalized, raw)
-        );
+        extractPlaceholders(byDay[day]).forEach((raw, normalized) => record(normalized, raw));
       });
-
-      const fallbackMessage = form.payload?.message;
-      if (fallbackMessage) {
-        const messagePlaceholders = extractPlaceholders(fallbackMessage);
-        messagePlaceholders.forEach((raw, normalized) =>
-          addPlaceholder(normalized, raw)
-        );
-      }
+      extractPlaceholders(form.payload?.message).forEach((raw, normalized) => record(normalized, raw));
     }
 
     if (showFirstContactTemplate.value) {
-      const entriesByComponent = selectedTemplate.value?.placeholderEntries || {};
-      Object.values(entriesByComponent).forEach(entries => {
-        entries.forEach(({ raw, normalized }) => addPlaceholder(normalized, raw));
+      Object.values(selectedTemplate.value?.placeholderEntries || {}).forEach(entries => {
+        entries.forEach(({ raw, normalized }) => record(normalized, raw));
       });
-
       if (!selectedTemplate.value && templateFallback.value?.params) {
         Object.values(templateFallback.value.params).forEach(mapping => {
-          Object.keys(mapping || {}).forEach(key => {
-            addPlaceholder(normalizeVarKey(key), key);
-          });
+          Object.keys(mapping || {}).forEach(key => record(normalizeVarKey(key), key));
         });
       }
     }
@@ -1053,74 +774,67 @@ export function useEventsForm(props, emit) {
     placeholderGlobalError.value = '';
     placeholderDaysError.value = '';
     placeholdersSatisfied();
-  }
+  };
 
-  function updateVariableRegistry(details) {
+  const updateVariableRegistry = details => {
     const orderedKeys = Array.from(details.keys()).sort((a, b) =>
       a.localeCompare(b, undefined, { numeric: true })
     );
-
+    const customKeys = orderedKeys.filter(key => !RESERVED_TEMPLATE_VARIABLES.has(key));
     const nextMap = new Map();
-    orderedKeys.forEach(key => {
-      if (RESERVED_TEMPLATE_VARIABLES.has(key)) return;
+    customKeys.forEach(key => {
       const info = details.get(key) || {};
-      nextMap.set(key, {
-        key,
-        raw: info.raw || key,
-      });
+      nextMap.set(key, { key, raw: info.raw || key });
     });
-
     knownVariables.value = nextMap;
-    form.customFields = orderedKeys.filter(key => !RESERVED_TEMPLATE_VARIABLES.has(key));
-
+    form.customFields = [...customKeys];
     form.recipients = form.recipients.map(recipient => {
       const vars = { ...(recipient.vars || {}) };
-      orderedKeys.forEach(key => {
-        if (RESERVED_TEMPLATE_VARIABLES.has(key)) return;
-        if (!Object.prototype.hasOwnProperty.call(vars, key)) {
-          vars[key] = '';
-        }
+      customKeys.forEach(key => {
+        if (!Object.prototype.hasOwnProperty.call(vars, key)) vars[key] = '';
       });
       Object.keys(vars).forEach(existingKey => {
-        if (!details.has(existingKey) || RESERVED_TEMPLATE_VARIABLES.has(existingKey)) {
-          delete vars[existingKey];
-        }
+        if (!details.has(existingKey) || RESERVED_TEMPLATE_VARIABLES.has(existingKey)) delete vars[existingKey];
       });
       return { ...recipient, vars };
     });
-  }
+  };
+
+  // #endregion Template & Recipient Helpers
+
+  // #region Placeholder Watchers
 
   watch(showFirstContactTemplate, value => {
-    if (!value) {
-      templateFallback.value = null;
-      recomputeRequiredPlaceholders();
-    } else {
-      if (selectedTemplate.value && !templateFallback.value) {
-        templateFallback.value = buildTemplateFallbackObject(selectedTemplate.value);
-      }
-      recomputeRequiredPlaceholders();
+    if (!value) templateFallback.value = null;
+    if (value && selectedTemplate.value && !templateFallback.value) {
+      templateFallback.value = buildTemplateFallbackObject(selectedTemplate.value);
     }
+    recomputeRequiredPlaceholders();
   });
 
-  function resetForm() {
-    form.name = '';
+  // #endregion Placeholder Watchers
+
+  // #region Form Actions
+
+  const resetForm = () => {
+    Object.assign(form, {
+      name: '',
+      channel: '',
+      agent: '',
+      recipients: [],
+      payload: { message: 'Olá {{name}}!', messagesByDay: {} },
+      customFields: [],
+      enabled: true,
+      daysOfWeek: [],
+      time: '',
+      timezone: BRT_TIMEZONE,
+      startAt: '',
+      endAt: '',
+    });
     originalName.value = '';
-    form.channel = '';
-    form.agent = '';
-    form.recipients = [];
-    form.payload = { message: 'Olá {{name}}!', messagesByDay: {} };
-    form.customFields = [];
-    form.enabled = true;
-    form.daysOfWeek = [];
-    form.time = '';
-    form.timezone = BRT_TIMEZONE;
-    form.startAt = '';
-    form.endAt = '';
     selectedTemplateKey.value = '';
     csvReport.value = null;
-    status.show = false;
-    status.msg = '';
-    status.ok = true;
+    Object.assign(status, { show: false, ok: true, msg: '' });
     requiredPlaceholders.value = new Set();
     placeholderGlobalError.value = '';
     placeholderDaysError.value = '';
@@ -1130,86 +844,72 @@ export function useEventsForm(props, emit) {
     dailyWeekdays.value = false;
     initDefaultDates();
     ensureValidTimeSelection();
-  }
+  };
 
-  function hydrateFromValue(value) {
+  const hydrateFromValue = value => {
     if (!value) {
       resetForm();
-      originalName.value = '';  // << NOVO
+      templates.value = [];
+      selectedTemplateKey.value = '';
       recomputeRequiredPlaceholders();
-      if (form.channel === 'whatsapp' && form.agent) {
-        loadTemplates();
-      } else {
-        templates.value = [];
-        selectedTemplateKey.value = '';
-      }
       return;
     }
 
     const incomingName = value.Name || value.name || '';
-    form.name = sanitizeScheduleName(incomingName);
     originalName.value = incomingName;
-    form.channel = value.Channel || '';
-    form.agent = value.Agent || '';
-    form.recipients = Array.isArray(value.Recipients)
+    Object.assign(form, {
+      name: sanitizeScheduleName(incomingName),
+      channel: value.Channel || '',
+      agent: value.Agent || '',
+    });
+
+    const recipientsRaw = Array.isArray(value.Recipients)
       ? JSON.parse(JSON.stringify(value.Recipients))
       : [];
+    form.recipients = normalizeRecipientsForChannel(recipientsRaw, form.channel);
 
-    form.recipients = form.recipients.map(recipient => ({
-      name: recipient.name || '',
-      email: recipient.email,
-      phone: normalizePhoneValue(recipient.phone || ''),
-      vars: Object.fromEntries(
-        Object.entries(recipient.vars || {})
-          .map(([key, v]) => [normalizeVarKey(key), v])
-          .filter(([key]) => key && !RESERVED_TEMPLATE_VARIABLES.has(key))
-      ),
-      primeiroContato: Boolean(recipient.primeiroContato),
-    }));
+    const customKeys = Array.from(
+      new Set(
+        form.recipients.flatMap(recipient => Object.keys(recipient.vars || {}))
+      )
+    ).filter(key => !RESERVED_TEMPLATE_VARIABLES.has(key));
+    form.customFields = [...customKeys];
 
-    const collected = new Set();
-    form.recipients.forEach(recipient => {
-      if (recipient && typeof recipient.vars === 'object') {
-        Object.keys(recipient.vars).forEach(key =>
-          collected.add(normalizeVarKey(key))
-        );
-      }
+    form.recipients = form.recipients.map(recipient => {
+      const vars = { ...(recipient.vars || {}) };
+      customKeys.forEach(key => {
+        if (!Object.prototype.hasOwnProperty.call(vars, key)) vars[key] = '';
+      });
+      return { ...recipient, vars };
     });
-    form.customFields = Array.from(collected).filter(
-      key => !RESERVED_TEMPLATE_VARIABLES.has(key)
-    );
 
-    // Derive global first contact from existing recipients (legacy per-recipient data)
-    firstContactAll.value = form.recipients.some(r => Boolean(r.primeiroContato));
+    firstContactAll.value = form.recipients.some(recipient => Boolean(recipient.primeiroContato));
 
     const defaultPayload =
       form.channel === 'email'
         ? { subject: '', text: '', html: '' }
         : { message: 'Olá {{name}}!', messagesByDay: {} };
-    const payload = JSON.parse(JSON.stringify(value.Payload || defaultPayload));
-    if (form.channel === 'whatsapp' && !payload.messagesByDay) {
-      payload.messagesByDay = {};
-    }
+    const sourcePayload = value.Payload || defaultPayload;
+    const payload = JSON.parse(JSON.stringify(sourcePayload));
+    if (form.channel === 'whatsapp' && !payload.messagesByDay) payload.messagesByDay = {};
     form.payload = payload;
-    templateFallback.value = value.Payload?.template_fallback || null;
+    templateFallback.value = sourcePayload?.template_fallback || null;
 
-    form.enabled = Boolean(value.Enabled);
-    form.startAt = value.StartAt || '';
-    form.endAt = value.EndAt || '';
-    form.daysOfWeek = Array.isArray(value.DaysOfWeek)
-      ? value.DaysOfWeek.slice()
-      : [];
-    form.time = value.Time || '';
-    form.timezone = value.Timezone || BRT_TIMEZONE;
+    Object.assign(form, {
+      enabled: Boolean(value.Enabled),
+      startAt: value.StartAt || '',
+      endAt: value.EndAt || '',
+      daysOfWeek: Array.isArray(value.DaysOfWeek) ? [...value.DaysOfWeek] : [],
+      time: value.Time || '',
+      timezone: value.Timezone || BRT_TIMEZONE,
+    });
     dailyWeekdays.value =
       form.daysOfWeek.length === WEEKDAYS.length &&
       WEEKDAYS.every(day => form.daysOfWeek.includes(day));
 
     selectedTemplateKey.value = '';
     csvReport.value = null;
-    status.show = false;
-    status.msg = '';
-    status.ok = true;
+    Object.assign(status, { show: false, ok: true, msg: '' });
 
     ensureValidTimeSelection();
 
@@ -1222,7 +922,7 @@ export function useEventsForm(props, emit) {
         selectedTemplateKey.value = '';
       }
     });
-  }
+  };
 
   async function loadAgents() {
     agentsLoading.value = true;
@@ -1271,10 +971,6 @@ export function useEventsForm(props, emit) {
       const pushTemplate = (template, index = 0) => {
         if (!template) return;
         const components = template.components || [];
-        the:
-        {
-          /* eslint-disable no-labels */
-        }
         const preview =
           combineTemplateTextFromComponents(components) ||
           template.text ||
@@ -1365,11 +1061,9 @@ export function useEventsForm(props, emit) {
     nextTick(recomputeRequiredPlaceholders);
   }
 
-  function addRecipient() {
-    const variableKeys = Array.from(knownVariables.value.keys());
-    const vars = Object.fromEntries(variableKeys.map(key => [key, '']));
-    form.recipients = [
-      ...form.recipients,
+  const addRecipient = () => {
+    const vars = Object.fromEntries(Array.from(knownVariables.value.keys()).map(key => [key, '']));
+    const recipient = normalizeRecipientForChannel(
       {
         name: '',
         phone: form.channel === 'whatsapp' ? '+55' : undefined,
@@ -1377,9 +1071,11 @@ export function useEventsForm(props, emit) {
         vars,
         primeiroContato: Boolean(firstContactAll.value),
       },
-    ];
+      form.channel
+    );
+    form.recipients = [...form.recipients, recipient];
     nextTick(recomputeRequiredPlaceholders);
-  }
+  };
 
   function onRecipientPhoneInput(index, event) {
     const raw = event?.target?.value ?? '';
@@ -1425,20 +1121,15 @@ export function useEventsForm(props, emit) {
     recipient.phone = normalizePhoneValue(recipient.phone);
   }
 
-  function removeRecipient(index) {
-    form.recipients = form.recipients.filter(
-      (_, recipientIndex) => recipientIndex !== index
-    );
+  const removeRecipient = index => {
+    form.recipients = form.recipients.filter((_, recipientIndex) => recipientIndex !== index);
     nextTick(recomputeRequiredPlaceholders);
-  }
+  };
 
-  function detectDelimiter(headerLine) {
-    const commaCount = (headerLine.match(/,/g) || []).length;
-    const semicolonCount = (headerLine.match(/;/g) || []).length;
-    return semicolonCount > commaCount ? ';' : ',';
-  }
+  const detectDelimiter = headerLine =>
+    ((headerLine.match(/;/g) || []).length > (headerLine.match(/,/g) || []).length ? ';' : ',');
 
-  function parseCsvText(textValue) {
+  const parseCsvText = textValue => {
     const lines = textValue.split(/\r?\n/).filter(line => line.trim() !== '');
     if (!lines.length) return { headers: [], rows: [], originalHeaders: [] };
     const delimiter = detectDelimiter(lines[0]);
@@ -1470,9 +1161,9 @@ export function useEventsForm(props, emit) {
     const headers = originalHeaders.map(normalizeHeader);
     const rows = lines.slice(1).map(split);
     return { headers, rows, originalHeaders };
-  }
+  };
 
-  function handleCsvUpload(event) {
+  const handleCsvUpload = event => {
     const file = event.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
@@ -1590,7 +1281,10 @@ export function useEventsForm(props, emit) {
           }
         });
 
-        form.recipients = [...form.recipients, ...freshRecipients];
+        form.recipients = normalizeRecipientsForChannel(
+          [...form.recipients, ...freshRecipients],
+          form.channel
+        );
         csvReport.value = {
           ok: true,
           msg: text.recipients.csv.summary(
@@ -1606,9 +1300,9 @@ export function useEventsForm(props, emit) {
       }
     };
     reader.readAsText(file, 'utf-8');
-  }
+  };
 
-  function downloadCsvTemplate() {
+  const downloadCsvTemplate = () => {
     const needsEmail = form.channel === 'email';
     const baseHeaders = needsEmail ? ['name', 'email'] : ['name', 'phone'];
     const baseRows = needsEmail
@@ -1701,9 +1395,9 @@ export function useEventsForm(props, emit) {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(link.href);
-  }
+  };
 
-  function deriveEnabledFromPeriod() {
+  const deriveEnabledFromPeriod = () => {
     const now = new Date();
     const start = form.startAt ? new Date(form.startAt) : null;
     const end = form.endAt ? new Date(form.endAt) : null;
@@ -1715,9 +1409,9 @@ export function useEventsForm(props, emit) {
     if (okStart && start && (!end || !okEnd)) return now >= start;
     if (okEnd && end && (!start || !okStart)) return now <= end;
     return true;
-  }
+  };
 
-  function buildPayload() {
+  const buildPayload = () => {
     const injectReservedNameVar = requiredPlaceholders.value.has('name');
 
     const recipientsPayload = form.recipients.map(recipient => {
@@ -1784,16 +1478,16 @@ export function useEventsForm(props, emit) {
       time: form.time,
       timezone: form.timezone || BRT_TIMEZONE,
     };
-  }
+  };
 
-  async function submit() {
+  const submit = async () => {
     if (!isValid.value || submitting.value) return;
     submitting.value = true;
     status.show = false;
     try {
       const payload = buildPayload();
       if (isEdit.value) {
-        await api.put(`/${encodeURIComponent(originalName.value)}`, payload); // << ALTERADO
+        await api.put(`/${encodeURIComponent(originalName.value)}`, payload);
         status.show = true;
         status.ok = true;
         status.msg = text.status.updated;
@@ -1811,7 +1505,11 @@ export function useEventsForm(props, emit) {
     } finally {
       submitting.value = false;
     }
-  }
+  };
+
+  // #endregion Form Actions
+
+  // #region Form Watchers
 
   watch(
     () => props.value,
@@ -1831,7 +1529,6 @@ export function useEventsForm(props, emit) {
     }
   );
 
-  // Define WhatsApp como padrão quando o dropdown habilitar
   watch(
     canSelectChannel,
     enabled => {
@@ -1846,39 +1543,14 @@ export function useEventsForm(props, emit) {
     channel => {
       if (!channel) {
         form.agent = '';
-        form.recipients = form.recipients.map(recipient => ({
-          name: recipient.name || '',
-          email: undefined,
-          phone: undefined,
-          vars: Object.fromEntries(
-            Object.entries(recipient.vars || {}).map(([key, v]) => [
-              normalizeVarKey(key),
-              v,
-            ])
-          ),
-          primeiroContato: Boolean(recipient.primeiroContato),
-        }));
+        form.recipients = normalizeRecipientsForChannel(form.recipients, '');
         form.payload = { message: 'Olá {{name}}!', messagesByDay: {} };
         templates.value = [];
         selectedTemplateKey.value = '';
         templateFallback.value = null;
         return;
       }
-      form.recipients = form.recipients.map(recipient => ({
-        name: recipient.name || '',
-        email: channel === 'email' ? recipient.email || '' : undefined,
-        phone:
-          channel === 'whatsapp'
-            ? normalizePhoneValue(recipient.phone || '')
-            : undefined,
-        vars: Object.fromEntries(
-          Object.entries(recipient.vars || {}).map(([key, v]) => [
-            normalizeVarKey(key),
-            v,
-          ])
-        ),
-        primeiroContato: Boolean(recipient.primeiroContato),
-      }));
+      form.recipients = normalizeRecipientsForChannel(form.recipients, channel);
 
       if (channel === 'email') {
         form.payload = {
@@ -1927,21 +1599,12 @@ export function useEventsForm(props, emit) {
   );
 
   watch(dailyWeekdays, val => {
-    if (val) {
-      form.daysOfWeek = WEEKDAYS.slice();
-    } else {
-      // Ao desmarcar "Disparo diário (úteis)", limpamos a seleção de dias
-      form.daysOfWeek = [];
-    }
+    form.daysOfWeek = val ? WEEKDAYS.slice() : [];
   });
 
-  watch(startDateValue, () => {
-    ensureValidTimeSelection();
-  });
+  watch(startDateValue, ensureValidTimeSelection);
 
-  watch(availableTimeOptions, () => {
-    ensureValidTimeSelection();
-  });
+  watch(availableTimeOptions, ensureValidTimeSelection);
 
   watch(
     () => form.agent,
@@ -1972,6 +1635,10 @@ export function useEventsForm(props, emit) {
     }
   );
 
+  // #endregion Form Watchers
+
+  // #region Lifecycle
+
   let nowIntervalId = null;
 
   onMounted(() => {
@@ -1992,12 +1659,13 @@ export function useEventsForm(props, emit) {
     }
   });
 
+  // #endregion Lifecycle
+
+  // #region Exposed API
+
   return {
-    // constants/text
     text,
     DAYS_OF_WEEK,
-
-    // state
     agents,
     agentsLoading,
     templates,
@@ -2014,21 +1682,15 @@ export function useEventsForm(props, emit) {
     placeholderGlobalError,
     placeholderDaysError,
     templateFallback,
-
-    // computed (data-only calendar)
     startDateInput,
     endDateInput,
     startDateMin,
     endDateMin,
     isStartDateInPast,
-
-    // time logic
     availableTimeOptions,
     isTimeSelectionEnabled,
     timeError,
     isTimeValid,
-
-    // misc
     isEdit,
     isNameFilled,
     isNameValid,
@@ -2039,10 +1701,10 @@ export function useEventsForm(props, emit) {
     selectedTemplate,
     showFirstContactTemplate,
     variableEntries,
+    hasHeaderVars,
+    hasBodyVars,
     variableLabelMap,
     isValid,
-
-    // methods
     recomputeRequiredPlaceholders,
     updateVariableRegistry,
     resetForm,
@@ -2063,4 +1725,5 @@ export function useEventsForm(props, emit) {
     buildPayload,
     submit,
   };
+  // #endregion Exposed API
 }

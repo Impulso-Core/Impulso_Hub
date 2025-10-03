@@ -1,16 +1,9 @@
-import {
-  computed,
-  nextTick,
-  onBeforeUnmount,
-  onMounted,
-  reactive,
-  ref,
-  watch,
-} from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import axios from 'axios';
 import { useAlert } from 'dashboard/composables';
 
 export function useEventsScreen() {
+  // #region Constants & Text
   const API_BASE =
     'https://f4wzfjousg.execute-api.us-east-1.amazonaws.com/schedules';
   const LOCAL_TIMEZONE = 'America/Sao_Paulo';
@@ -113,6 +106,10 @@ export function useEventsScreen() {
     },
   });
 
+  // #endregion Constants & Text
+
+  // #region Reactive State & Options
+
   const api = axios.create({ baseURL: API_BASE });
 
   const schedules = ref([]);
@@ -172,13 +169,16 @@ export function useEventsScreen() {
     },
   ];
 
-  function formatDateTime(value) {
+  // #endregion Reactive State & Options
+
+  // #region Formatting Helpers
+
+  const formatDateTime = value => {
     if (!value) return text.fallbackDash;
     try {
-      const iso =
-        typeof value === 'string' && value.includes(' ')
-          ? value.replace(' ', 'T')
-          : value;
+      const iso = typeof value === 'string' && value.includes(' ')
+        ? value.replace(' ', 'T')
+        : value;
       const date = new Date(iso);
       if (Number.isNaN(date.getTime())) return value;
       return date.toLocaleString('pt-BR', {
@@ -192,50 +192,40 @@ export function useEventsScreen() {
     } catch (_e) {
       return value;
     }
-  }
+  };
 
-  function humanRecurring(item) {
-    if (item.runAt) {
-      return formatDateTime(item.runAt);
-    }
+  const includesAll = (source, list) => list.every(day => source.includes(day));
 
+  const humanRecurring = item => {
+    if (item.runAt) return formatDateTime(item.runAt);
     const days = item.daysOfWeek || [];
     const time = item.time || text.fallbackDash;
-
     if (!days.length) return text.fallbackDash;
-
-    const daysCount = days.length;
-    const isWeekdays =
-      daysCount === 5 &&
-      ['MON', 'TUE', 'WED', 'THU', 'FRI'].every(d => days.includes(d));
-    const isWeekend =
-      daysCount === 2 && ['SAT', 'SUN'].every(d => days.includes(d));
-    const isDaily = daysCount === 7;
-
-    if (isDaily) return `Todos os dias às ${time}`;
-    if (isWeekdays) return `Dias úteis às ${time}`;
-    if (isWeekend) return `Finais de semana às ${time}`;
-    if (daysCount === 1) {
+    const labels = {
+      daily: days.length === 7,
+      weekdays: days.length === 5 && includesAll(days, ['MON', 'TUE', 'WED', 'THU', 'FRI']),
+      weekend: days.length === 2 && includesAll(days, ['SAT', 'SUN']),
+    };
+    if (labels.daily) return `Todos os dias às ${time}`;
+    if (labels.weekdays) return `Dias úteis às ${time}`;
+    if (labels.weekend) return `Finais de semana às ${time}`;
+    if (days.length === 1) {
       const dayLabel = WEEKDAY_LABEL[days[0]] || days[0];
       return `Toda ${dayLabel} às ${time}`;
     }
-
     const daysLabel = days.map(day => WEEKDAY_LABEL[day] || day).join(', ');
     return `${daysLabel} às ${time}`;
-  }
+  };
 
-  function renderTemplate(template, variables) {
+  const renderTemplate = (template, variables) => {
     if (!template) return '';
     const normalized = { ...(variables || {}) };
     if (normalized.name && !normalized.nome) normalized.nome = normalized.name;
     if (normalized.nome && !normalized.name) normalized.name = normalized.nome;
-    return template.replace(
-      /\{\{\s*([a-zA-Z0-9_\-.]+)\s*\}\}/g,
-      (_, key) => normalized[key] ?? ''
-    );
-  }
+    return template.replace(/\{\{\s*([a-zA-Z0-9_\-.]+)\s*\}\}/g, (_match, key) => normalized[key] ?? '');
+  };
 
-  function dayKeyFor(timezone) {
+  const dayKeyFor = timezone => {
     try {
       const formatter = new Intl.DateTimeFormat('en-US', {
         timeZone: timezone || 'UTC',
@@ -245,10 +235,14 @@ export function useEventsScreen() {
     } catch (_e) {
       return 'MON';
     }
-  }
+  };
 
-  function mapApiResponse(rows) {
-    return rows.map(row => ({
+  // #endregion Formatting Helpers
+
+  // #region Data Mapping Helpers
+
+  const mapApiResponse = rows =>
+    rows.map(row => ({
       eventId: row.Name,
       channel: row.Channel,
       recipients: row.Recipients || [],
@@ -263,50 +257,40 @@ export function useEventsScreen() {
       endAt: row.EndAt || null,
       agent: row.Agent || null,
     }));
-  }
 
-  function prepareEditPayload(schedule) {
-    return {
-      Name: schedule.eventId,
-      Channel: schedule.channel,
-      Recipients: JSON.parse(JSON.stringify(schedule.recipients || [])),
-      Payload: JSON.parse(JSON.stringify(schedule.payload || {})),
-      Enabled: schedule.enabled,
-      ScheduleExpression: schedule.scheduleExpression,
-      Timezone: schedule.timezone,
-      DaysOfWeek: schedule.daysOfWeek,
-      Time: schedule.time,
-      RunAt: schedule.runAt,
-      StartAt: schedule.startAt,
-      EndAt: schedule.endAt,
-      Agent: schedule.agent || null,
-    };
-  }
+  const prepareEditPayload = schedule => ({
+    Name: schedule.eventId,
+    Channel: schedule.channel,
+    Recipients: JSON.parse(JSON.stringify(schedule.recipients || [])),
+    Payload: JSON.parse(JSON.stringify(schedule.payload || {})),
+    Enabled: schedule.enabled,
+    ScheduleExpression: schedule.scheduleExpression,
+    Timezone: schedule.timezone,
+    DaysOfWeek: schedule.daysOfWeek,
+    Time: schedule.time,
+    RunAt: schedule.runAt,
+    StartAt: schedule.startAt,
+    EndAt: schedule.endAt,
+    Agent: schedule.agent || null,
+  });
 
-  function isExpanded(id) {
-    return expandedIds.value.has(id);
-  }
+  // #endregion Data Mapping Helpers
 
-  function toggleRecipients(id) {
+  // #region UI Actions
+
+  const isExpanded = id => expandedIds.value.has(id);
+
+  const toggleRecipients = id => {
     const next = new Set(expandedIds.value);
-    if (next.has(id)) {
-      next.delete(id);
-    } else {
-      next.add(id);
-    }
+    next[next.has(id) ? 'delete' : 'add'](id);
     expandedIds.value = next;
-  }
+  };
 
-  async function loadSchedules() {
+  const loadSchedules = async () => {
     loading.value = true;
     try {
       const { data } = await api.get('');
-      let items = [];
-      if (Array.isArray(data?.items)) {
-        items = data.items;
-      } else if (Array.isArray(data)) {
-        items = data;
-      }
+      const items = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : [];
       schedules.value = mapApiResponse(items);
     } catch (_e) {
       useAlert(text.alerts.loadError);
@@ -314,54 +298,47 @@ export function useEventsScreen() {
     } finally {
       loading.value = false;
     }
-  }
+  };
 
-  function openForm(schedule) {
+  const openDialog = (dialogRef, flag) => {
+    flag.value = true;
+    nextTick(() => dialogRef.value?.open());
+  };
+
+  const closeDialog = (dialogRef, flag, reset) => {
+    if (!flag.value) return reset();
+    dialogRef.value?.close();
+    reset();
+  };
+
+  const openForm = schedule => {
     selectedSchedule.value = schedule ? prepareEditPayload(schedule) : null;
-    formDialogOpen.value = true;
-    nextTick(() => {
-      formDialogRef.value?.open();
-    });
-  }
+    openDialog(formDialogRef, formDialogOpen);
+  };
 
-  function resetFormDialogState() {
+  const resetFormDialogState = () => {
     selectedSchedule.value = null;
     formDialogOpen.value = false;
-  }
+  };
 
-  function hideFormDialog() {
-    if (!formDialogOpen.value) {
-      resetFormDialogState();
-      return;
-    }
-    formDialogRef.value?.close();
-    resetFormDialogState();
-  }
+  const hideFormDialog = () => closeDialog(formDialogRef, formDialogOpen, resetFormDialogState);
 
-  async function handleSaved() {
+  const handleSaved = async () => {
     hideFormDialog();
     await loadSchedules();
-  }
+  };
 
-  function openPreview(schedule, recipient) {
+  const openPreview = (schedule, recipient) => {
     if (!schedule) return;
-    const channel = schedule.channel;
     const variables = {
       name: recipient.name || '',
       email: recipient.email || '',
       phone: recipient.phone || '',
       ...(recipient.vars || {}),
     };
-
-    if (channel === 'email') {
-      const subject = renderTemplate(
-        schedule.payload?.subject || text.preview.fallbackSubject,
-        variables
-      );
-      const body = renderTemplate(
-        schedule.payload?.text || schedule.payload?.html || '',
-        variables
-      );
+    if (schedule.channel === 'email') {
+      const subject = renderTemplate(schedule.payload?.subject || text.preview.fallbackSubject, variables);
+      const body = renderTemplate(schedule.payload?.text || schedule.payload?.html || '', variables);
       previewContent.title = subject || schedule.eventId;
       previewContent.body = body || text.preview.empty;
     } else {
@@ -372,74 +349,49 @@ export function useEventsScreen() {
       previewContent.title = schedule.eventId;
       previewContent.body = message || text.preview.empty;
     }
+    openDialog(previewDialogRef, previewDialogOpen);
+  };
 
-    previewDialogOpen.value = true;
-    nextTick(() => {
-      previewDialogRef.value?.open();
-    });
-  }
-
-  function resetPreviewDialogState() {
+  const resetPreviewDialogState = () => {
     previewContent.title = '';
     previewContent.body = '';
     previewDialogOpen.value = false;
-  }
+  };
 
-  function hidePreviewDialog() {
-    if (!previewDialogOpen.value) {
-      resetPreviewDialogState();
-      return;
-    }
-    previewDialogRef.value?.close();
-    resetPreviewDialogState();
-  }
+  const hidePreviewDialog = () => closeDialog(previewDialogRef, previewDialogOpen, resetPreviewDialogState);
 
-  function resetDeleteDialogState() {
+  const resetDeleteDialogState = () => {
     deleteTarget.value = null;
     deleteDialogOpen.value = false;
-  }
+  };
 
-  function openDeleteDialog(schedule) {
+  const openDeleteDialog = schedule => {
     deleteTarget.value = schedule;
-    deleteDialogOpen.value = true;
-    nextTick(() => {
-      deleteDialogRef.value?.open();
-    });
-  }
+    openDialog(deleteDialogRef, deleteDialogOpen);
+  };
 
-  function hideDeleteDialog() {
-    if (!deleteDialogOpen.value) {
-      resetDeleteDialogState();
-      return;
-    }
-    deleteDialogRef.value?.close();
-    resetDeleteDialogState();
-  }
+  const hideDeleteDialog = () => closeDialog(deleteDialogRef, deleteDialogOpen, resetDeleteDialogState);
 
-  async function toggleEnabled(schedule) {
+  const toggleEnabled = async schedule => {
     if (!schedule?.eventId || togglingId.value) return;
     togglingId.value = schedule.eventId;
     try {
-      await api.patch(`/${encodeURIComponent(schedule.eventId)}`, {
-        enabled: !schedule.enabled,
-      });
+      await api.patch(`/${encodeURIComponent(schedule.eventId)}`, { enabled: !schedule.enabled });
       schedule.enabled = !schedule.enabled;
     } catch (_e) {
       useAlert(text.alerts.toggleError);
     } finally {
       togglingId.value = '';
     }
-  }
+  };
 
-  async function confirmDelete() {
+  const confirmDelete = async () => {
     const target = deleteTarget.value;
     if (!target?.eventId) return;
     deletingId.value = target.eventId;
     try {
       await api.delete(`/${encodeURIComponent(target.eventId)}`);
-      schedules.value = schedules.value.filter(
-        item => item.eventId !== target.eventId
-      );
+      schedules.value = schedules.value.filter(item => item.eventId !== target.eventId);
       useAlert(text.alerts.deleteSuccess);
       hideDeleteDialog();
     } catch (_e) {
@@ -447,63 +399,46 @@ export function useEventsScreen() {
     } finally {
       deletingId.value = '';
     }
-  }
+  };
 
-  function handleKeydown(event) {
+  const handleKeydown = event => {
     if (event.key !== 'Escape') return;
-    if (formDialogOpen.value) hideFormDialog();
-    if (previewDialogOpen.value) hidePreviewDialog();
-    if (deleteDialogOpen.value) hideDeleteDialog();
-  }
+    hideFormDialog();
+    hidePreviewDialog();
+    hideDeleteDialog();
+  };
+
+  // #endregion UI Actions
+
+  // #region Derived State & Pagination
 
   const stats = computed(() => {
     const total = schedules.value.length;
     const enabled = schedules.value.filter(item => item.enabled).length;
-    const disabled = total - enabled;
     return [
-      {
-        label: text.stats.total,
-        value: total,
-        icon: 'i-lucide-calendar-clock',
-      },
-      {
-        label: text.stats.enabled,
-        value: enabled,
-        icon: 'i-lucide-play-circle',
-      },
-      {
-        label: text.stats.disabled,
-        value: disabled,
-        icon: 'i-lucide-pause-circle',
-      },
+      { label: text.stats.total, value: total, icon: 'i-lucide-calendar-clock' },
+      { label: text.stats.enabled, value: enabled, icon: 'i-lucide-play-circle' },
+      { label: text.stats.disabled, value: total - enabled, icon: 'i-lucide-pause-circle' },
     ];
   });
 
   const filteredSchedules = computed(() => {
     const query = filters.search.trim().toLowerCase();
-    return schedules.value
-      .filter(item => {
-        if (filters.channel !== 'all') {
-          return (item.channel || '').toLowerCase() === filters.channel;
-        }
-        return true;
-      })
-      .filter(item => {
-        if (filters.status === 'all') return true;
+    return schedules.value.filter(item => {
+      const channelMatch = filters.channel === 'all' || (item.channel || '').toLowerCase() === filters.channel;
+      if (!channelMatch) return false;
+      if (filters.status !== 'all') {
         const wantEnabled = filters.status === 'enabled';
-        return Boolean(item.enabled) === wantEnabled;
-      })
-      .filter(item => {
-        if (!query) return true;
-        return [item.eventId, item.channel, item.scheduleExpression]
-          .map(value => (value || '').toString().toLowerCase())
-          .some(value => value.includes(query));
-      });
+        if (Boolean(item.enabled) !== wantEnabled) return false;
+      }
+      if (!query) return true;
+      return [item.eventId, item.channel, item.scheduleExpression]
+        .map(value => (value || '').toString().toLowerCase())
+        .some(value => value.includes(query));
+    });
   });
 
-  const totalPages = computed(() =>
-    Math.max(1, Math.ceil(filteredSchedules.value.length / pageSize))
-  );
+  const totalPages = computed(() => Math.max(1, Math.ceil(filteredSchedules.value.length / pageSize)));
 
   const pagedSchedules = computed(() => {
     const start = (page.value - 1) * pageSize;
@@ -511,31 +446,19 @@ export function useEventsScreen() {
   });
 
   const goToPreviousPage = () => {
-    if (page.value <= 1) return;
-    page.value -= 1;
+    if (page.value > 1) page.value -= 1;
   };
 
   const goToNextPage = () => {
-    if (page.value >= totalPages.value) return;
-    page.value += 1;
+    if (page.value < totalPages.value) page.value += 1;
   };
 
-  watch(
-    () => filters.search,
-    () => {
-      page.value = 1;
-    }
-  );
+  // #endregion Derived State & Pagination
+
+  // #region Watchers
 
   watch(
-    () => filters.channel,
-    () => {
-      page.value = 1;
-    }
-  );
-
-  watch(
-    () => filters.status,
+    () => [filters.search, filters.channel, filters.status],
     () => {
       page.value = 1;
     }
@@ -546,6 +469,10 @@ export function useEventsScreen() {
     if (page.value > maxPage) page.value = maxPage;
   });
 
+  // #endregion Watchers
+
+  // #region Lifecycle
+
   onMounted(async () => {
     await loadSchedules();
     window.addEventListener('keydown', handleKeydown);
@@ -555,8 +482,11 @@ export function useEventsScreen() {
     window.removeEventListener('keydown', handleKeydown);
   });
 
+  // #endregion Lifecycle
+
+  // #region Exposed API
+
   return {
-    // state
     text,
     loading,
     schedules,
@@ -574,20 +504,16 @@ export function useEventsScreen() {
     deleteDialogOpen,
     page,
     pageSize,
-    // refs for dialogs
     formDialogRef,
     previewDialogRef,
     deleteDialogRef,
-    // computed
     stats,
     filteredSchedules,
     totalPages,
     pagedSchedules,
-    // helpers
     formatDateTime,
     humanRecurring,
     isExpanded,
-    // actions
     toggleRecipients,
     loadSchedules,
     openForm,
@@ -605,4 +531,5 @@ export function useEventsScreen() {
     goToPreviousPage,
     goToNextPage,
   };
+  // #endregion Exposed API
 }

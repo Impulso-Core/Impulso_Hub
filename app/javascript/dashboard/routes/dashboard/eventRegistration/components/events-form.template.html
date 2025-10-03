@@ -252,14 +252,36 @@
       <p v-if="showFirstContactTemplate && !selectedTemplate" class="text-xs text-n-ruby-11">
         {{ text.content.templateSelect.required }}
       </p>
-      <p v-if="selectedTemplate?.placeholders.length" class="text-xs text-n-slate-10">
+      <p
+        v-if="selectedTemplate && Object.keys(selectedTemplate.placeholderEntries || {}).length"
+        class="text-xs text-n-slate-10"
+      >
         {{ text.content.templatePlaceholders }}
         <span
-          v-for="placeholder in selectedTemplate.placeholders"
-          :key="placeholder"
-          class="ml-1 inline-flex items-center rounded-full bg-n-solid-2 px-2 py-0.5 text-[11px]"
+          v-for="(entries, component) in selectedTemplate.placeholderEntries"
+          :key="component"
+          class="ml-2 inline-flex flex-wrap items-center gap-2"
         >
-          {{ placeholder }}
+          <span class="font-semibold text-n-slate-11 uppercase">
+            {{
+              component === 'header'
+                ? text.content.templatePlaceholdersHeader
+                : component === 'body'
+                ? text.content.templatePlaceholdersBody
+                : component
+            }}
+          </span>
+          <span
+            v-for="entry in entries"
+            :key="entry.normalized"
+            class="ml-1 inline-flex items-center rounded-full bg-n-solid-2 px-2 py-0.5 text-[11px]"
+            :class="{
+              'bg-n-brand/10 text-n-brand': component === 'header',
+              'bg-n-slate-3 text-n-slate-11': component === 'body'
+            }"
+          >
+            {{ entry.raw }}
+          </span>
         </span>
       </p>
 
@@ -325,13 +347,51 @@
             <h4 class="text-xs font-semibold uppercase tracking-wide text-n-slate-9">
               {{ text.customField.title }}
             </h4>
+            <div
+              v-if="showFirstContactTemplate && (selectedTemplate || templateFallback)"
+              class="text-xs text-n-slate-10"
+            >
+              <div class="mb-2 flex items-center gap-3">
+                <span
+                  v-if="hasHeaderVars"
+                  class="inline-flex items-center gap-1"
+                >
+                  <span class="inline-block h-2 w-2 rounded-full bg-n-brand"></span>
+                  {{ text.content.templatePlaceholdersHeader }}
+                </span>
+                <span
+                  v-if="hasBodyVars"
+                  class="inline-flex items-center gap-1"
+                >
+                  <span class="inline-block h-2 w-2 rounded-full bg-n-slate-6"></span>
+                  {{ text.content.templatePlaceholdersBody }}
+                </span>
+              </div>
+              <p v-if="hasHeaderVars" class="text-[11px]">{{ text.customField.headerNote }}</p>
+            </div>
             <div class="grid gap-3 md:grid-cols-2">
               <div
                 v-for="variable in variableEntries"
                 :key="`${variable.key}-${index}`"
                 class="flex flex-col gap-1"
               >
-                <label class="text-xs font-medium text-n-slate-10">
+                <label class="flex items-center gap-2 text-xs font-medium text-n-slate-10">
+                  <span
+                    v-if="variable.component"
+                    class="inline-block h-2 w-2 rounded-full"
+                    :class="{
+                      'bg-n-brand': variable.component === 'header',
+                      'bg-n-slate-6': variable.component === 'body',
+                      'bg-n-slate-4': !['header', 'body'].includes(variable.component)
+                    }"
+                    :title="
+                      variable.component === 'header'
+                        ? 'Cabeçalho'
+                        : variable.component === 'body'
+                        ? 'Corpo'
+                        : variable.component
+                    "
+                  ></span>
                   {{ variable.label }}
                 </label>
                 <input
