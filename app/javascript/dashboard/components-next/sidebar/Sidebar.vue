@@ -412,6 +412,12 @@ const menuItems = computed(() => {
       to: accountScopedRoute('event_registration'),
     },
     {
+      name: 'unoficial_campaigns',
+      label: 'Campanhas Não Oficiais',
+      icon: 'i-lucide-megaphone',
+      to: accountScopedRoute('unoficial_campaigns'),
+    },
+    {
       name: 'Settings',
       label: t('SIDEBAR.SETTINGS'),
       icon: 'i-lucide-bolt',

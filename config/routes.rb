@@ -16,6 +16,8 @@ Rails.application.routes.draw do
 
     get '/app', to: 'dashboard#index'
     get '/app/*params', to: 'dashboard#index'
+    get '/dashboard/unoficial-campaigns', to: 'dashboard#index'
+    get '/app/accounts/:account_id/unoficial-campaigns', to: 'dashboard#index'
     get '/app/accounts/:account_id/settings/inboxes/new/twitter', to: 'dashboard#index', as: 'app_new_twitter_inbox'
     get '/app/accounts/:account_id/settings/inboxes/new/microsoft', to: 'dashboard#index', as: 'app_new_microsoft_inbox'
     get '/app/accounts/:account_id/settings/inboxes/new/instagram', to: 'dashboard#index', as: 'app_new_instagram_inbox'
